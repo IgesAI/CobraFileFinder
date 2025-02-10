@@ -1,0 +1,17 @@
+# Auto detect text files and perform LF normalization
+* text=auto
+
+# Python files
+*.py text diff=python
+
+# JavaScript files
+*.js text
+*.jsx text
+
+# Config files
+*.json text
+*.yml text
+*.yaml text
+
+# Documentation
+*.md text diff=markdown 
