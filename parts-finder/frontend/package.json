@@ -1,0 +1,21 @@
+{
+  "name": "parts-finder-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "build": "tailwindcss -i ./src/index.css -o ./dist/style.css",
+    "dev": "tailwindcss -i ./src/index.css -o ./dist/style.css --watch",
+    "start": "npm run build && serve ."
+  },
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-error-boundary": "^4.0.12"
+  },
+  "devDependencies": {
+    "tailwindcss": "^3.3.3",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.31",
+    "serve": "^14.2.1"
+  }
+}
