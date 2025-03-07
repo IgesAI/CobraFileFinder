@@ -23,6 +23,34 @@ window.PartsSearch = function PartsSearch() {
     preview: false
   });
 
+  // Add an EyeIcon component for the preview button
+  const EyeIcon = function(props) {
+    return React.createElement('svg', {
+      xmlns: "http://www.w3.org/2000/svg",
+      width: "16",
+      height: "16",
+      viewBox: "0 0 24 24",
+      fill: "none",
+      stroke: "currentColor",
+      strokeWidth: "2",
+      strokeLinecap: "round",
+      strokeLinejoin: "round",
+      className: props.className || '',
+    }, [
+      React.createElement('path', {
+        key: 'path1',
+        d: "M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"
+      }),
+      React.createElement('circle', {
+        key: 'circle',
+        cx: "12",
+        cy: "12",
+        r: "3"
+      })
+    ]);
+  };
+  window.EyeIcon = EyeIcon;
+
   const theme = {
     bg: isDarkMode 
       ? 'bg-gradient-to-br from-gray-900 via-purple-900 to-gray-900' 
@@ -183,7 +211,17 @@ window.PartsSearch = function PartsSearch() {
   const PreviewModal = ({ file, onClose }) => {
     if (!file) return null;
     
-    const isModelFile = file.type.toLowerCase() === 'stl' || file.type.toLowerCase() === '3mf';
+    const fileExtension = file.name.split('.').pop().toLowerCase();
+    const isModelFile = fileExtension === 'stl' || fileExtension === '3mf';
+    
+    console.log('PreviewModal: File info:', file);
+    console.log('PreviewModal: File extension:', fileExtension);
+    console.log('PreviewModal: Is model file?', isModelFile);
+    
+    const handleClose = () => {
+      console.log('Closing preview modal');
+      onClose();
+    };
     
     return React.createElement('div', {
       className: 'fixed inset-0 bg-black/50 flex items-center justify-center z-50'
@@ -195,26 +233,50 @@ window.PartsSearch = function PartsSearch() {
           key: 'header',
           className: 'flex justify-between items-center mb-4'
         }, [
-          React.createElement('h3', {
-            className: 'text-lg font-semibold'
-          }, file.name),
+          React.createElement('div', {
+            className: 'flex items-center gap-2'
+          }, [
+            React.createElement('h3', {
+              className: 'text-lg font-semibold dark:text-white'
+            }, file.name),
+            React.createElement('span', {
+              className: 'px-2 py-1 text-xs font-medium rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-sm'
+            }, fileExtension.toUpperCase())
+          ]),
           React.createElement('button', {
-            onClick: onClose,
-            className: 'text-gray-500 hover:text-gray-700'
+            onClick: handleClose,
+            className: 'text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white text-2xl font-bold'
           }, '×')
         ]),
         React.createElement('div', {
           key: 'content',
-          className: 'h-full'
+          className: 'h-[calc(100%-3rem)]'
         },
           isModelFile
             ? React.createElement(window.ModelViewer, {
+                key: `model-viewer-${file.path}-${Date.now()}`,
                 filePath: file.path
               })
-            : React.createElement('iframe', {
-                src: `file://${file.path}`,
-                className: 'w-full h-full border rounded'
-              })
+            : React.createElement('div', {
+                className: 'flex flex-col items-center justify-center h-full'
+              }, [
+                React.createElement('div', {
+                  key: 'icon',
+                  className: 'text-6xl mb-4'
+                }, '📄'),
+                React.createElement('p', {
+                  key: 'message',
+                  className: 'text-gray-500 dark:text-gray-400 text-center'
+                }, `Preview not available for ${fileExtension.toUpperCase()} files`),
+                React.createElement('div', {
+                  key: 'file-info',
+                  className: 'mt-4 p-4 bg-gray-100 dark:bg-gray-700 rounded-lg text-sm'
+                }, [
+                  React.createElement('p', { key: 'path' }, `Path: ${file.path}`),
+                  React.createElement('p', { key: 'size' }, `Size: ${Math.round(file.size / 1024)} KB`),
+                  React.createElement('p', { key: 'modified' }, `Modified: ${new Date(file.modified * 1000).toLocaleString()}`)
+                ])
+              ])
         )
       ])
     );
@@ -304,7 +366,11 @@ window.PartsSearch = function PartsSearch() {
                 React.createElement('th', { 
                   key: 'location-header',
                   className: `px-6 py-3 text-left text-xs font-medium ${theme.textMuted} uppercase` 
-                }, 'Location')
+                }, 'Location'),
+                React.createElement('th', { 
+                  key: 'actions-header',
+                  className: `px-6 py-3 text-right text-xs font-medium ${theme.textMuted} uppercase` 
+                }, 'Actions')
               ])
             ),
             // Table Body
@@ -315,15 +381,9 @@ window.PartsSearch = function PartsSearch() {
               searchResults.map((file) =>
                 React.createElement('tr', {
                   key: file.path,
-                  className: `${theme.hover} transition-colors cursor-pointer
+                  className: `${theme.hover} transition-colors
                     ${selectedFiles.has(file.path) ? theme.selected : theme.card}`,
-                  onClick: (e) => {
-                    if (e.ctrlKey || e.metaKey) {
-                      setPreviewFile(file);
-                    } else {
-                      toggleFileSelection(file.path);
-                    }
-                  }
+                  onClick: () => toggleFileSelection(file.path)
                 }, [
                   React.createElement('td', { 
                     key: 'checkbox-cell',
@@ -361,7 +421,31 @@ window.PartsSearch = function PartsSearch() {
                   React.createElement('td', { 
                     key: 'location-cell',
                     className: `px-6 py-4 text-sm ${theme.textMuted}` 
-                  }, file.relative_path || file.path)
+                  }, file.relative_path || file.path),
+                  React.createElement('td', { 
+                    key: 'actions-cell',
+                    className: 'px-6 py-4 whitespace-nowrap text-right' 
+                  },
+                    React.createElement('button', {
+                      onClick: (e) => {
+                        e.stopPropagation();
+                        setPreviewFile(file);
+                      },
+                      className: `px-3 py-1 text-xs font-medium rounded-md 
+                        bg-blue-100 text-blue-700 hover:bg-blue-200
+                        dark:bg-blue-900 dark:text-blue-300 dark:hover:bg-blue-800
+                        transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500
+                        flex items-center gap-1`
+                    }, [
+                      React.createElement(EyeIcon, {
+                        key: 'eye-icon',
+                        className: 'w-3 h-3'
+                      }),
+                      React.createElement('span', {
+                        key: 'preview-text'
+                      }, 'Preview')
+                    ])
+                  )
                 ])
               )
             )
@@ -616,7 +700,24 @@ window.PartsSearch = function PartsSearch() {
           resultsContainer
         )
       )
-    )
+    ),
+    
+    // Preview Modal
+    previewFile && React.createElement(PreviewModal, {
+      key: `preview-modal-${previewFile.path}`,
+      file: previewFile,
+      onClose: () => {
+        console.log('Closing preview modal');
+        setPreviewFile(null);
+      }
+    }),
+    
+    // Loading Overlay
+    React.createElement(LoadingOverlay, {
+      key: 'loading-overlay',
+      visible: loadingStates.copy,
+      message: 'Copying files...'
+    })
   ]); // Close the main return array
 };    // Close the PartsSearch function
 

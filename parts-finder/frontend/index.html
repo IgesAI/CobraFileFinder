@@ -3,6 +3,9 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
     <title>Parts Finder</title>
     <!-- Initialize dark mode before anything else -->
     <script>
@@ -12,8 +15,39 @@
         document.documentElement.classList.remove('dark')
       }
     </script>
-    <!-- Add Tailwind CSS from CDN -->
+    <!-- Add Tailwind CSS from CDN with config -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Space Grotesk', 'sans-serif'],
+            },
+            animation: {
+              'gradient': 'gradient 15s ease infinite',
+              'glow': 'glow 2s ease-in-out infinite alternate',
+              'pulse': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            },
+            keyframes: {
+              gradient: {
+                '0%, 100%': { backgroundPosition: '0% 50%' },
+                '50%': { backgroundPosition: '100% 50%' },
+              },
+              glow: {
+                '0%': { boxShadow: '0 0 5px rgba(192, 132, 252, 0.2)' },
+                '100%': { boxShadow: '0 0 20px rgba(192, 132, 252, 0.4)' }
+              },
+              pulse: {
+                '0%, 100%': { opacity: 1 },
+                '50%': { opacity: .7 }
+              }
+            }
+          }
+        }
+      }
+    </script>
     <!-- Add React from CDN -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
@@ -26,9 +60,28 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600&display=swap" rel="stylesheet">
+    <style>
+      #reload-button {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        background-color: #4f46e5;
+        color: white;
+        padding: 10px 15px;
+        border-radius: 8px;
+        font-weight: bold;
+        cursor: pointer;
+        z-index: 9999;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+      #reload-button:hover {
+        background-color: #4338ca;
+      }
+    </style>
   </head>
   <body>
     <div id="root"></div>
+    <button id="reload-button" onclick="location.reload(true)">Force Reload</button>
 
     <!-- Define Components First -->
     <script>
@@ -42,66 +95,80 @@
       };
 
       // UI Components
-      window.Card = function Card({ className = '', children }) {
+      // Card Component
+      const Card = ({ className = '', ...props }) => {
         return React.createElement('div', {
-          className: `rounded-lg border bg-white dark:bg-gray-800 dark:border-gray-700 shadow-sm ${className}`
-        }, children);
+          className: `rounded-lg border bg-card text-card-foreground shadow-sm ${className}`,
+          ...props
+        });
       };
 
-      window.CardHeader = function CardHeader({ className = '', children }) {
+      const CardHeader = ({ className = '', ...props }) => {
         return React.createElement('div', {
-          className: `flex flex-col space-y-1.5 p-6 dark:text-gray-100 ${className}`
-        }, children);
+          className: `flex flex-col space-y-1.5 p-6 ${className}`,
+          ...props
+        });
       };
 
-      window.CardTitle = function CardTitle({ className = '', children }) {
+      const CardTitle = ({ className = '', ...props }) => {
         return React.createElement('h3', {
-          className: `text-2xl font-semibold leading-none tracking-tight 
-            text-gray-900 dark:text-gray-50 ${className}`
-        }, children);
+          className: `text-2xl font-semibold leading-none tracking-tight ${className}`,
+          ...props
+        });
       };
 
-      window.CardContent = function CardContent({ className = '', children }) {
+      const CardContent = ({ className = '', ...props }) => {
         return React.createElement('div', {
-          className: `p-6 pt-0 ${className}`
-        }, children);
+          className: `p-6 pt-0 ${className}`,
+          ...props
+        });
       };
 
-      window.Alert = function Alert({ className = '', variant = 'default', children }) {
+      window.Card = Card;
+      window.CardHeader = CardHeader;
+      window.CardTitle = CardTitle;
+      window.CardContent = CardContent;
+
+      // Alert Component
+      const Alert = ({ className = '', variant = "default", ...props }) => {
         const variants = {
-          default: 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200',
-          destructive: 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200'
+          default: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
+          destructive: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
         };
+
         return React.createElement('div', {
-          className: `rounded-lg p-4 ${variants[variant]} ${className}`
-        }, children);
+          className: `rounded-lg p-4 ${variants[variant]} ${className}`,
+          ...props
+        });
       };
 
-      window.AlertDescription = function AlertDescription({ className = '', children }) {
+      const AlertDescription = ({ className = '', ...props }) => {
         return React.createElement('div', {
-          className: `text-sm [&_p]:leading-relaxed ${className}`
-        }, children);
+          className: `text-sm [&_p]:leading-relaxed ${className}`,
+          ...props
+        });
       };
 
-      window.Select = function Select({ value, onValueChange, className = '', children }) {
-        // Ensure children have keys if they're an array
-        const processedChildren = Array.isArray(children) 
-          ? children.map((child, index) => 
-              child.key ? child : React.cloneElement(child, { key: `select-item-${index}` })
-            )
-          : children;
+      window.Alert = Alert;
+      window.AlertDescription = AlertDescription;
 
+      // Select Component
+      const Select = ({ value, onValueChange, className = '', children }) => {
         return React.createElement('select', {
           value: value,
           onChange: (e) => onValueChange(e.target.value),
-          className: `border rounded-md px-3 py-2 bg-white dark:bg-gray-700 
-            dark:border-gray-600 dark:text-gray-50 ${className}`
-        }, processedChildren);
+          className: `border rounded-md px-3 py-2 bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-50 ${className}`
+        }, children);
       };
 
-      window.SelectItem = function SelectItem({ value, children }) {
-        return React.createElement('option', { value }, children);
+      const SelectItem = ({ value, children }) => {
+        return React.createElement('option', {
+          value: value
+        }, children);
       };
+
+      window.Select = Select;
+      window.SelectItem = SelectItem;
 
       // Icon Components
       window.SearchIcon = function SearchIcon(props) {
@@ -168,34 +235,61 @@
           })
         );
       };
+
+      window.FolderIcon = function FolderIcon(props) {
+        return React.createElement('svg', {
+          xmlns: "http://www.w3.org/2000/svg",
+          width: "20",
+          height: "20",
+          viewBox: "0 0 24 24",
+          fill: "none",
+          stroke: "currentColor",
+          strokeWidth: "2",
+          strokeLinecap: "round",
+          strokeLinejoin: "round",
+          className: props.className || '',
+        }, [
+          React.createElement('path', {
+            key: 'path',
+            d: "M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"
+          })
+        ]);
+      };
+
+      // Helper function to load scripts sequentially
+      function loadScriptsSequentially(scripts, callback) {
+        if (scripts.length === 0) {
+          callback();
+          return;
+        }
+        
+        const script = document.createElement('script');
+        script.src = scripts[0];
+        script.onload = function() {
+          loadScriptsSequentially(scripts.slice(1), callback);
+        };
+        script.onerror = function() {
+          console.error('Failed to load script:', scripts[0]);
+          loadScriptsSequentially(scripts.slice(1), callback);
+        };
+        document.body.appendChild(script);
+      }
     </script>
+
+    <!-- Load UI Components -->
+    <script src="src/components/ui/card.jsx?v=1"></script>
+    <script src="src/components/ui/alert.jsx?v=1"></script>
+    <script src="src/components/ui/select.jsx?v=1"></script>
 
     <!-- Load App Components in Order -->
-    <script src="src/components/ErrorBoundary.jsx"></script>
-    <script src="src/components/ModelViewer.jsx"></script>
-    <script src="src/components/PartsSearch.jsx"></script>
-    <script>
-      // Wait to make sure PartsSearch is loaded
-      if (!window.PartsSearch) {
-        console.error('PartsSearch component not loaded');
-      }
-    </script>
+    <script src="src/components/ErrorBoundary.jsx?v=1"></script>
+    <script src="src/components/ModelViewer.jsx?v=3"></script>
+    <script src="src/components/PartsSearch.jsx?v=1"></script>
+    <script src="src/App.jsx?v=1"></script>
 
-    <script src="src/App.jsx"></script>
+    <!-- Initialize app -->
     <script>
-      // Wait to make sure all components are loaded
-      if (!window.App || !window.ErrorBoundary || !window.PartsSearch) {
-        console.error('Required components not loaded:', {
-          PartsSearch: !!window.PartsSearch,
-          App: !!window.App,
-          ErrorBoundary: !!window.ErrorBoundary
-        });
-      }
-    </script>
-
-    <script>
-      // Initialize app after all components are loaded
-      function initApp() {
+      document.addEventListener('DOMContentLoaded', function() {
         if (window.PartsSearch && window.App && window.ErrorBoundary) {
           lucide.createIcons();
           const root = ReactDOM.createRoot(document.getElementById('root'));
@@ -213,41 +307,7 @@
             ErrorBoundary: !!window.ErrorBoundary
           });
         }
-      }
-
-      document.addEventListener('DOMContentLoaded', initApp);
-    </script>
-
-    <!-- Add to the tailwind config -->
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            fontFamily: {
-              sans: ['Space Grotesk', 'sans-serif'],
-            },
-            animation: {
-              'gradient': 'gradient 15s ease infinite',
-              'glow': 'glow 2s ease-in-out infinite alternate',
-              'pulse': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-            },
-            keyframes: {
-              gradient: {
-                '0%, 100%': { backgroundPosition: '0% 50%' },
-                '50%': { backgroundPosition: '100% 50%' },
-              },
-              glow: {
-                '0%': { boxShadow: '0 0 5px rgba(192, 132, 252, 0.2)' },
-                '100%': { boxShadow: '0 0 20px rgba(192, 132, 252, 0.4)' }
-              },
-              pulse: {
-                '0%, 100%': { opacity: 1 },
-                '50%': { opacity: .7 }
-              }
-            }
-          }
-        }
-      }
+      });
     </script>
   </body>
 </html>

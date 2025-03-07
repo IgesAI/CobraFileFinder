@@ -6,7 +6,7 @@ from datetime import datetime
 from pathlib import Path
 import logging
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
+from functools import partial, lru_cache
 import threading
 import time
 from flask_limiter import Limiter
@@ -30,12 +30,6 @@ DIRECTORIES = {
 local_data = threading.local()
 
 VALID_EXTENSIONS = {'.stl', '.3mf'}
-file_cache = {
-    'data': {},
-    'timestamp': {}
-}
-CACHE_TTL = 3600  # 1 hour
-cache_lock = threading.Lock()
 
 limiter = Limiter(
     app=app,
@@ -43,42 +37,14 @@ limiter = Limiter(
     default_limits=["200 per day", "50 per hour"]
 )
 
+@lru_cache(maxsize=10)
 def get_cached_files(directory):
-    with cache_lock:
-        current_time = time.time()
-        if (directory not in file_cache['data'] or 
-            current_time - file_cache['timestamp'].get(directory, 0) > CACHE_TTL):
-            file_cache['data'][directory] = []
-            for root, _, files in os.walk(directory):
-                for file in files:
-                    if os.path.splitext(file)[1].lower() in VALID_EXTENSIONS:
-                        file_cache['data'][directory].append(os.path.join(root, file))
-            file_cache['timestamp'][directory] = current_time
-        return file_cache['data'][directory]
-
-def process_directory(root, search_terms, file_type, base_dir):
-    results = []
-    try:
-        for file in os.listdir(root):
-            file_path = os.path.join(root, file)
-            if os.path.isfile(file_path):
-                if any(term in file.lower() for term in search_terms):
-                    file_ext = os.path.splitext(file)[1].lower()
-                    if file_ext in ['.stl', '.3mf']:
-                        if file_type and file_ext != f'.{file_type.lower()}':
-                            continue
-                            
-                        results.append({
-                            'path': file_path,
-                            'relative_path': os.path.relpath(file_path, base_dir),
-                            'name': file,
-                            'type': file_ext[1:].upper(),
-                            'size': os.path.getsize(file_path),
-                            'modified': os.path.getmtime(file_path)
-                        })
-    except Exception as e:
-        app.logger.error(f"Error processing directory {root}: {str(e)}")
-    return results
+    result = []
+    for root, _, files in os.walk(directory):
+        for file in files:
+            if os.path.splitext(file)[1].lower() in VALID_EXTENSIONS:
+                result.append(os.path.join(root, file))
+    return result
 
 def search_files(category, search_term, file_type=None, latest_only=False):
     results = []
@@ -272,25 +238,22 @@ def api_copy():
 def refresh_cache():
     """Force refresh of the file cache"""
     try:
-        file_cache.clear()
+        # Clear the lru_cache
+        get_cached_files.cache_clear()
+        # Pre-warm the cache
         for category, directory in DIRECTORIES.items():
             get_cached_files(directory)
         return jsonify({'message': 'Cache refreshed successfully'})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/')
-def serve_frontend():
-    return send_from_directory(app.static_folder, 'index.html')
-
+@app.route('/', defaults={'path': 'index.html'})
 @app.route('/<path:path>')
 def serve_static(path):
     return send_from_directory(app.static_folder, path)
 
 @app.route('/assets/<path:filename>')
 def serve_assets(filename):
-    # Use os.path to handle paths correctly
-    import os
     assets_dir = os.path.join(os.path.dirname(__file__), '..', 'frontend', 'public', 'assets')
     return send_from_directory(assets_dir, filename)
 
@@ -310,6 +273,102 @@ def health_check():
         'status': 'healthy' if drives_ok else 'degraded',
         'drives_ok': drives_ok
     })
+
+@app.route('/api/model/<path:file_path>')
+def serve_model(file_path):
+    """Serve a 3D model file for the viewer"""
+    try:
+        app.logger.info(f"Model request received for: {file_path}")
+        
+        # Log request details
+        app.logger.debug(f"Request headers: {dict(request.headers)}")
+        app.logger.debug(f"Request method: {request.method}")
+        
+        # For security, validate that the file exists and is within allowed directories
+        full_path = os.path.abspath(file_path)
+        app.logger.debug(f"Resolved absolute path: {full_path}")
+        
+        # Check if the file is within one of our allowed directories
+        allowed = False
+        for category, base_dir in DIRECTORIES.items():
+            base_dir_abs = os.path.abspath(base_dir)
+            app.logger.debug(f"Checking if path is in {category} directory: {base_dir_abs}")
+            app.logger.debug(f"Path starts with base_dir? {full_path.startswith(base_dir_abs)}")
+            if full_path.startswith(base_dir_abs):
+                allowed = True
+                app.logger.debug(f"Path is allowed in {category} directory")
+                break
+        
+        if not allowed:
+            app.logger.error(f"Attempted to access file outside allowed directories: {full_path}")
+            return jsonify({'error': 'Access denied'}), 403
+            
+        # Check if file exists
+        file_exists = os.path.isfile(full_path)
+        app.logger.debug(f"File exists? {file_exists}")
+        if not file_exists:
+            app.logger.error(f"File not found: {full_path}")
+            return jsonify({'error': 'File not found'}), 404
+            
+        # Get the directory and filename
+        directory = os.path.dirname(full_path)
+        filename = os.path.basename(full_path)
+        app.logger.debug(f"Serving file: {filename} from directory: {directory}")
+        
+        # Serve the file with appropriate headers
+        response = send_from_directory(directory, filename)
+        
+        # Add CORS headers
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        
+        app.logger.info(f"Successfully serving model file: {filename}")
+        return response
+    except Exception as e:
+        app.logger.error(f"Error serving model file: {str(e)}")
+        app.logger.exception("Exception details:")
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/file-check', methods=['POST'])
+def check_file_exists():
+    """Check if a file exists and is accessible"""
+    try:
+        data = request.json
+        file_path = data.get('path')
+        
+        if not file_path:
+            return jsonify({'error': 'No file path provided'}), 400
+            
+        app.logger.info(f"File check request for: {file_path}")
+        
+        # Resolve the absolute path
+        full_path = os.path.abspath(file_path)
+        app.logger.debug(f"Resolved absolute path: {full_path}")
+        
+        # Check if the file is within one of our allowed directories
+        allowed = False
+        for category, base_dir in DIRECTORIES.items():
+            base_dir_abs = os.path.abspath(base_dir)
+            if full_path.startswith(base_dir_abs):
+                allowed = True
+                break
+        
+        # Check if file exists
+        file_exists = os.path.isfile(full_path)
+        
+        return jsonify({
+            'path': file_path,
+            'full_path': full_path,
+            'exists': file_exists,
+            'allowed': allowed,
+            'size': os.path.getsize(full_path) if file_exists else 0,
+            'is_file': os.path.isfile(full_path),
+            'is_dir': os.path.isdir(full_path)
+        })
+    except Exception as e:
+        app.logger.error(f"Error checking file: {str(e)}")
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     import argparse
