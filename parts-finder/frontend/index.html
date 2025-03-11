@@ -52,9 +52,10 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <!-- Add Three.js and STL loader -->
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+    <script src="src/lib/three/TransformControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/STLLoader.js"></script>
     <!-- Add Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -95,81 +96,6 @@
       };
 
       // UI Components
-      // Card Component
-      const Card = ({ className = '', ...props }) => {
-        return React.createElement('div', {
-          className: `rounded-lg border bg-card text-card-foreground shadow-sm ${className}`,
-          ...props
-        });
-      };
-
-      const CardHeader = ({ className = '', ...props }) => {
-        return React.createElement('div', {
-          className: `flex flex-col space-y-1.5 p-6 ${className}`,
-          ...props
-        });
-      };
-
-      const CardTitle = ({ className = '', ...props }) => {
-        return React.createElement('h3', {
-          className: `text-2xl font-semibold leading-none tracking-tight ${className}`,
-          ...props
-        });
-      };
-
-      const CardContent = ({ className = '', ...props }) => {
-        return React.createElement('div', {
-          className: `p-6 pt-0 ${className}`,
-          ...props
-        });
-      };
-
-      window.Card = Card;
-      window.CardHeader = CardHeader;
-      window.CardTitle = CardTitle;
-      window.CardContent = CardContent;
-
-      // Alert Component
-      const Alert = ({ className = '', variant = "default", ...props }) => {
-        const variants = {
-          default: "bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200",
-          destructive: "bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200"
-        };
-
-        return React.createElement('div', {
-          className: `rounded-lg p-4 ${variants[variant]} ${className}`,
-          ...props
-        });
-      };
-
-      const AlertDescription = ({ className = '', ...props }) => {
-        return React.createElement('div', {
-          className: `text-sm [&_p]:leading-relaxed ${className}`,
-          ...props
-        });
-      };
-
-      window.Alert = Alert;
-      window.AlertDescription = AlertDescription;
-
-      // Select Component
-      const Select = ({ value, onValueChange, className = '', children }) => {
-        return React.createElement('select', {
-          value: value,
-          onChange: (e) => onValueChange(e.target.value),
-          className: `border rounded-md px-3 py-2 bg-white dark:bg-gray-700 dark:border-gray-600 dark:text-gray-50 ${className}`
-        }, children);
-      };
-
-      const SelectItem = ({ value, children }) => {
-        return React.createElement('option', {
-          value: value
-        }, children);
-      };
-
-      window.Select = Select;
-      window.SelectItem = SelectItem;
-
       // Icon Components
       window.SearchIcon = function SearchIcon(props) {
         return React.createElement('i', {
@@ -195,8 +121,8 @@
       window.SunIcon = function SunIcon(props) {
         return React.createElement('svg', {
           xmlns: "http://www.w3.org/2000/svg",
-          width: "20",
-          height: "20",
+          width: "24",
+          height: "24",
           viewBox: "0 0 24 24",
           fill: "none",
           stroke: "currentColor",
@@ -220,8 +146,8 @@
       window.MoonIcon = function MoonIcon(props) {
         return React.createElement('svg', {
           xmlns: "http://www.w3.org/2000/svg",
-          width: "20",
-          height: "20",
+          width: "24",
+          height: "24",
           viewBox: "0 0 24 24",
           fill: "none",
           stroke: "currentColor",
@@ -283,8 +209,8 @@
 
     <!-- Load App Components in Order -->
     <script src="src/components/ErrorBoundary.jsx?v=1"></script>
-    <script src="src/components/ModelViewer.jsx?v=3"></script>
-    <script src="src/components/PartsSearch.jsx?v=1"></script>
+    <script src="src/components/ModelViewer.jsx?v=17"></script>
+    <script src="src/components/PartsSearch.jsx?v=4"></script>
     <script src="src/App.jsx?v=1"></script>
 
     <!-- Initialize app -->
@@ -304,7 +230,8 @@
           console.error('Required components not loaded:', {
             PartsSearch: !!window.PartsSearch,
             App: !!window.App,
-            ErrorBoundary: !!window.ErrorBoundary
+            ErrorBoundary: !!window.ErrorBoundary,
+            ModelViewer: !!window.ModelViewer
           });
         }
       });
