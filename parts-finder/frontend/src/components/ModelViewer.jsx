@@ -4,10 +4,12 @@ if (!window.modelViewerGlobals) {
   window.modelViewerGlobals = {
     activeInstance: null,
     instanceCount: 0,
-    isInitialized: false
+    isInitialized: false,
+    instances: {} // Track all instances by ID
   };
 }
 
+// Define the ModelViewer component and assign it to window
 window.ModelViewer = function ModelViewer({ filePath }) {
   // Use the global instance tracking
   const instanceId = React.useRef(null);
@@ -21,6 +23,12 @@ window.ModelViewer = function ModelViewer({ filePath }) {
     // Make this the active instance
     window.modelViewerGlobals.activeInstance = instanceId.current;
     window.modelViewerGlobals.isInitialized = false; // Reset initialization flag
+    
+    // Register this instance
+    window.modelViewerGlobals.instances[instanceId.current] = {
+      filePath,
+      active: true
+    };
   }
   
   const containerRef = React.useRef(null);
@@ -48,12 +56,40 @@ window.ModelViewer = function ModelViewer({ filePath }) {
     measurementLine: null,
     raycaster: null,
     mouse: null,
-    transformControls: null
+    transformControls: null,
+    resizeObserver: null
   });
   
+  // Define handleResize at component level
+  const handleResize = React.useCallback(() => {
+    if (!containerRef.current || !threeObjects.current.renderer || !threeObjects.current.camera) return;
+    
+    const { renderer, camera } = threeObjects.current;
+    const width = containerRef.current.clientWidth;
+    const height = containerRef.current.clientHeight;
+    
+    console.log(`Instance ${instanceId.current}: Resizing to ${width}x${height}`);
+    
+    // Update camera aspect ratio
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    
+    // Update renderer size
+    renderer.setSize(width, height);
+  }, []);
+  
   // Create a global cleanup function that can be called from outside the component
-  window.threeJsCleanup = function() {
-    console.log(`Instance ${instanceId.current}: Global Three.js cleanup called`);
+  window.threeJsCleanup = function(specificInstanceId = null) {
+    // If a specific instance ID is provided, only clean up that instance
+    const targetInstanceId = specificInstanceId || instanceId.current;
+    
+    console.log(`Instance ${targetInstanceId}: Global Three.js cleanup called`);
+    
+    // Only proceed if this is the target instance
+    if (specificInstanceId && specificInstanceId !== instanceId.current) {
+      console.log(`Instance ${instanceId.current}: Skipping cleanup as it's not the target instance`);
+      return;
+    }
     
     // Reset initialization flag
     if (isInitializedRef.current) {
@@ -61,13 +97,20 @@ window.ModelViewer = function ModelViewer({ filePath }) {
     }
     
     // Reset global initialization state if this is the active instance
-    if (window.modelViewerGlobals.activeInstance === instanceId.current) {
+    if (window.modelViewerGlobals.activeInstance === targetInstanceId) {
       window.modelViewerGlobals.isInitialized = false;
       window.modelViewerGlobals.activeInstance = null;
     }
     
     // Remove event listeners
     document.removeEventListener('keydown', window.modelViewerKeydownHandler);
+    window.removeEventListener('resize', handleResize);
+    
+    // Clean up resize observer if it exists
+    if (threeObjects.current.resizeObserver) {
+      threeObjects.current.resizeObserver.disconnect();
+      threeObjects.current.resizeObserver = null;
+    }
     
     // Cancel animation frame
     if (threeObjects.current.animationId) {
@@ -120,7 +163,7 @@ window.ModelViewer = function ModelViewer({ filePath }) {
         try {
           renderer.domElement.parentNode.removeChild(renderer.domElement);
         } catch (e) {
-          console.error(`Instance ${instanceId.current}: Error removing renderer DOM element:`, e);
+          console.error(`Instance ${targetInstanceId}: Error removing renderer DOM element:`, e);
         }
       }
       threeObjects.current.renderer = null;
@@ -135,25 +178,14 @@ window.ModelViewer = function ModelViewer({ filePath }) {
       threeObjects.current.scene = null;
     }
     
-    // Reset all refs
-    threeObjects.current = {
-      scene: null,
-      camera: null,
-      renderer: null,
-      controls: null,
-      mesh: null,
-      animationId: null,
-      gridHelper: null,
-      axesHelper: null,
-      measurementLine: null,
-      raycaster: null,
-      mouse: null,
-      transformControls: null
-    };
+    // Remove this instance from the global tracking
+    if (window.modelViewerGlobals.instances[targetInstanceId]) {
+      delete window.modelViewerGlobals.instances[targetInstanceId];
+    }
     
     // Decrement instance count
     window.modelViewerGlobals.instanceCount--;
-    console.log(`Instance ${instanceId.current}: Cleanup complete, remaining instances: ${window.modelViewerGlobals.instanceCount}`);
+    console.log(`Instance ${targetInstanceId}: Cleanup complete, remaining instances: ${window.modelViewerGlobals.instanceCount}`);
   };
   
   // Initialize Three.js scene
@@ -190,7 +222,8 @@ window.ModelViewer = function ModelViewer({ filePath }) {
       
       // Setup scene
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x121212);
+      // Use a lighter background color for better visibility
+      scene.background = new THREE.Color(0x2a2a2a);
       
       // Setup camera
       const camera = new THREE.PerspectiveCamera(
@@ -199,7 +232,8 @@ window.ModelViewer = function ModelViewer({ filePath }) {
         0.1,
         1000
       );
-      camera.position.z = 100;
+      // Position camera closer for better initial view
+      camera.position.z = 50;
       
       // Setup renderer
       const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -208,20 +242,38 @@ window.ModelViewer = function ModelViewer({ filePath }) {
         containerRef.current.clientHeight
       );
       
+      // Set pixel ratio for better quality on high-DPI displays
+      renderer.setPixelRatio(window.devicePixelRatio);
+      
       // Clear container before adding new elements
       containerRef.current.innerHTML = '';
       containerRef.current.appendChild(renderer.domElement);
       
+      // Make sure the renderer canvas fills its container
+      renderer.domElement.style.width = '100%';
+      renderer.domElement.style.height = '100%';
+      renderer.domElement.style.display = 'block';
+      
+      // Add resize observer to handle container size changes
+      const resizeObserver = new ResizeObserver(handleResize);
+      resizeObserver.observe(containerRef.current);
+      
+      // Store resize observer in ref for cleanup
+      threeObjects.current.resizeObserver = resizeObserver;
+      
+      // Also listen for window resize events
+      window.addEventListener('resize', handleResize);
+      
       // Add lights
-      const ambientLight = new THREE.AmbientLight(0x404040);
+      const ambientLight = new THREE.AmbientLight(0x606060); // Brighter ambient light
       scene.add(ambientLight);
       
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.5);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8); // Brighter directional light
       directionalLight.position.set(0, 1, 0);
       scene.add(directionalLight);
       
       // Add a second directional light from another angle
-      const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.3);
+      const directionalLight2 = new THREE.DirectionalLight(0xffffff, 0.5);
       directionalLight2.position.set(1, -1, 1);
       scene.add(directionalLight2);
       
@@ -461,18 +513,6 @@ window.ModelViewer = function ModelViewer({ filePath }) {
     }
   }, [isMeasuring]);
   
-  // Handle window resize
-  const handleResize = React.useCallback(() => {
-    if (!containerRef.current || !threeObjects.current.renderer || !threeObjects.current.camera) return;
-    
-    const { renderer, camera } = threeObjects.current;
-    
-    camera.aspect = containerRef.current.clientWidth / containerRef.current.clientHeight;
-    camera.updateProjectionMatrix();
-    
-    renderer.setSize(containerRef.current.clientWidth, containerRef.current.clientHeight);
-  }, []);
-  
   // Animation loop
   const animate = React.useCallback(() => {
     const { renderer, scene, camera, controls } = threeObjects.current;
@@ -493,152 +533,57 @@ window.ModelViewer = function ModelViewer({ filePath }) {
     window.modelViewerAnimationId = animationId; // Store in global for external cleanup
   }, []);
   
-  // Handle keyboard shortcuts (Blender-like)
-  const handleKeyDown = React.useCallback((event) => {
-    const { key, shiftKey, ctrlKey, altKey } = event;
-    const { mesh, scene, camera, controls, transformControls } = threeObjects.current;
-    
-    if (!mesh) return;
-    
+  // Handle keyboard shortcuts
+  const handleKeyDown = React.useCallback((e) => {
     // Only handle keyboard shortcuts if this is the active instance
     if (window.modelViewerGlobals.activeInstance !== instanceId.current) {
       return;
     }
     
+    const key = e.key.toLowerCase();
     console.log(`Instance ${instanceId.current}: Key pressed: ${key}`);
     
-    // Prevent default browser actions for these keys
-    if (['g', 'r', 's', 'x', 'y', 'z', 'Escape'].includes(key)) {
-      event.preventDefault();
-    }
-    
-    // Check if transform controls are available
-    if (!transformControls) {
-      console.warn('TransformControls not available for keyboard shortcuts');
-      if (['g', 'r', 's'].includes(key)) {
-        const transformUI = document.getElementById('transform-ui');
-        if (transformUI) {
-          transformUI.textContent = 'Transform controls not available. Try reloading the page.';
-          transformUI.style.color = '#ff5555';
-          
-          // Clear message after 3 seconds
-          setTimeout(() => {
-            if (transformUI) {
-              transformUI.textContent = '';
-              transformUI.style.color = 'white';
-            }
-          }, 3000);
-        }
-      }
-      return;
-    }
-    
     try {
-      // Transform mode keys
-      if (key === 'g') {
-        console.log('Entering translate mode');
-        transformControls.setMode('translate');
-        transformControls.visible = true;
-        
-        // Show transform UI
-        const transformUI = document.getElementById('transform-ui');
-        if (transformUI) transformUI.textContent = 'Mode: Translate (G) | Press X, Y, Z to constrain axis | ESC to cancel';
-        
+      // Transform mode shortcuts
+      if (key === 't') {
+        setTransformMode(prev => prev === 'translate' ? null : 'translate');
+        setTransformAxis(null);
         return;
       }
       
       if (key === 'r') {
-        console.log('Entering rotate mode');
-        transformControls.setMode('rotate');
-        transformControls.visible = true;
-        
-        // Show transform UI
-        const transformUI = document.getElementById('transform-ui');
-        if (transformUI) transformUI.textContent = 'Mode: Rotate (R) | Press X, Y, Z to constrain axis | ESC to cancel';
-        
+        setTransformMode(prev => prev === 'rotate' ? null : 'rotate');
+        setTransformAxis(null);
         return;
       }
       
       if (key === 's') {
-        console.log('Entering scale mode');
-        transformControls.setMode('scale');
-        transformControls.visible = true;
-        
-        // Show transform UI
-        const transformUI = document.getElementById('transform-ui');
-        if (transformUI) transformUI.textContent = 'Mode: Scale (S) | Press X, Y, Z to constrain axis | ESC to cancel';
-        
+        setTransformMode(prev => prev === 'scale' ? null : 'scale');
+        setTransformAxis(null);
         return;
       }
       
-      // Axis constraint keys - map standard 3D software axes to Three.js axes
-      if (['x', 'y', 'z'].includes(key.toLowerCase())) {
-        // Create a mapping between standard 3D software keys and Three.js axes
-        const keyToThreeAxis = {
-          'x': 'x',  // X in standard is X in Three.js
-          'y': 'y',  // Y in standard is Y in Three.js (green)
-          'z': 'z'   // Z in standard is Z in Three.js (blue)
-        };
-        
-        const threeAxis = keyToThreeAxis[key.toLowerCase()];
-        const standardAxis = key.toUpperCase();
-        
-        console.log(`Constraining to ${standardAxis} axis (${threeAxis} in Three.js)`);
-        
-        // Set the space to 'world' for consistent axis orientation
-        transformControls.setSpace('world');
-        
-        // Check if we're already showing only this axis
-        const isOnlyThisAxisShown = 
-          (threeAxis === 'x' && transformControls.showX && 
-           !transformControls.showY && !transformControls.showZ) ||
-          (threeAxis === 'y' && transformControls.showY && 
-           !transformControls.showX && !transformControls.showZ) ||
-          (threeAxis === 'z' && transformControls.showZ && 
-           !transformControls.showX && !transformControls.showY);
-        
-        if (isOnlyThisAxisShown) {
-          // If only this axis is shown, show all axes
-          transformControls.showX = true;
-          transformControls.showY = true;
-          transformControls.showZ = true;
-        } else {
-          // Otherwise, show only this axis
-          transformControls.showX = (threeAxis === 'x');
-          transformControls.showY = (threeAxis === 'y');
-          transformControls.showZ = (threeAxis === 'z');
-        }
-        
-        // Update transform UI
-        const transformUI = document.getElementById('transform-ui');
-        if (transformUI) {
-          const mode = transformControls.mode.charAt(0).toUpperCase() + transformControls.mode.slice(1);
-          const modeKey = transformControls.mode === 'translate' ? 'G' : transformControls.mode === 'rotate' ? 'R' : 'S';
-          
-          if (transformControls.showX && 
-              transformControls.showY && 
-              transformControls.showZ) {
-            transformUI.textContent = `Mode: ${mode} (${modeKey}) | All axes | ESC to cancel`;
-          } else {
-            // Get the label for the visible axis
-            let axisLabel = standardAxis;
-            
-            transformUI.textContent = `Mode: ${mode} (${modeKey}) | Axis: ${axisLabel} | ESC to cancel`;
-          }
-        }
-        
+      // Axis constraints
+      if (key === 'x') {
+        setTransformAxis(prev => prev === 'x' ? null : 'x');
         return;
       }
       
-      // Cancel transform
-      if (key === 'Escape' && transformControls.visible) {
-        console.log('Canceling transform mode');
-        transformControls.visible = false;
-        
-        // Hide transform UI
-        const transformUI = document.getElementById('transform-ui');
-        if (transformUI) transformUI.textContent = '';
-        
+      if (key === 'y') {
+        setTransformAxis(prev => prev === 'y' ? null : 'y');
+        return;
+      }
+      
+      if (key === 'z') {
+        setTransformAxis(prev => prev === 'z' ? null : 'z');
+        return;
+      }
+      
+      // Measurement mode
+      if (key === 'm') {
+        setIsMeasuring(prev => !prev);
+        setMeasurePoints([]);
+        setMeasureDistance(null);
         return;
       }
     } catch (error) {
@@ -717,10 +662,11 @@ window.ModelViewer = function ModelViewer({ filePath }) {
               loadingIndicator.parentNode.removeChild(loadingIndicator);
             }
             
+            // Use a brighter material for better visibility
             const material = new THREE.MeshPhongMaterial({
-              color: 0xf1f1f1,  // Light gray color
-              specular: 0x111111,
-              shininess: 200
+              color: 0xf5f5f5,  // Almost white for better visibility
+              specular: 0x333333,
+              shininess: 30
             });
             
             const mesh = new THREE.Mesh(geometry, material);
@@ -734,15 +680,12 @@ window.ModelViewer = function ModelViewer({ filePath }) {
             const boundingBox = new THREE.Box3().setFromObject(mesh);
             const size = boundingBox.getSize(new THREE.Vector3());
             const maxDim = Math.max(size.x, size.y, size.z);
-            const scale = 30 / maxDim;  // Smaller scale to fit with grid
+            const scale = 40 / maxDim;  // Larger scale for better visibility
             mesh.scale.multiplyScalar(scale);
             
             // Add mesh to scene
             scene.add(mesh);
             threeObjects.current.mesh = mesh;
-            
-            // Don't scale grid with model anymore
-            // threeObjects.current.gridHelper.scale.set(scale, scale, scale);
             
             // Attach transform controls to the mesh
             if (threeObjects.current.transformControls) {
@@ -804,7 +747,7 @@ window.ModelViewer = function ModelViewer({ filePath }) {
               flex-direction: column;
               align-items: center;
               justify-content: center;
-              background-color: #121212;
+              background-color: #2a2a2a;
               color: white;
               text-align: center;
               padding: 20px;
@@ -842,7 +785,7 @@ window.ModelViewer = function ModelViewer({ filePath }) {
               flex-direction: column;
               align-items: center;
               justify-content: center;
-              background-color: #121212;
+              background-color: #2a2a2a;
               color: white;
               text-align: center;
               padding: 20px;
@@ -867,450 +810,145 @@ window.ModelViewer = function ModelViewer({ filePath }) {
   
   // Add transform UI
   const addTransformUI = () => {
-    if (!containerRef.current) return;
+    // Create a control panel if it doesn't exist
+    const controlPanel = document.getElementById('model-control-panel');
     
-    // Create main control panel container
-    const controlPanel = document.createElement('div');
-    controlPanel.style.position = 'absolute';
-    controlPanel.style.bottom = '10px';
-    controlPanel.style.left = '10px';
-    controlPanel.style.padding = '12px';
-    controlPanel.style.backgroundColor = 'rgba(30, 30, 30, 0.85)';
-    controlPanel.style.color = 'white';
-    controlPanel.style.borderRadius = '6px';
-    controlPanel.style.fontSize = '14px';
-    controlPanel.style.zIndex = '30';
-    controlPanel.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-    controlPanel.style.boxShadow = '0 4px 6px rgba(0, 0, 0, 0.3)';
-    controlPanel.style.backdropFilter = 'blur(10px)';
-    controlPanel.style.border = '1px solid rgba(255, 255, 255, 0.1)';
-    controlPanel.style.width = '280px';
-    controlPanel.id = 'model-control-panel';
+    if (controlPanel) {
+      // Clear existing content
+      while (controlPanel.firstChild) {
+        controlPanel.removeChild(controlPanel.firstChild);
+      }
+    } else {
+      // Create a new control panel
+      const newPanel = document.createElement('div');
+      newPanel.id = 'model-control-panel';
+      newPanel.style.position = 'absolute';
+      newPanel.style.top = '10px';
+      newPanel.style.left = '10px';
+      newPanel.style.zIndex = '1000';
+      newPanel.style.backgroundColor = 'rgba(15, 23, 42, 0.85)';
+      newPanel.style.backdropFilter = 'blur(8px)';
+      newPanel.style.borderRadius = '12px';
+      newPanel.style.padding = '16px';
+      newPanel.style.width = '220px';
+      newPanel.style.maxHeight = 'calc(100% - 20px)';
+      newPanel.style.overflowY = 'auto';
+      newPanel.style.boxShadow = '0 10px 25px rgba(0, 0, 0, 0.2)';
+      newPanel.style.border = '1px solid rgba(255, 255, 255, 0.1)';
+      newPanel.style.color = 'white';
+      newPanel.style.fontFamily = '"Space Grotesk", sans-serif';
+      newPanel.style.transition = '0.3s';
+      
+      // Add to container
+      containerRef.current.appendChild(newPanel);
+    }
     
-    // Create panel header
-    const panelHeader = document.createElement('div');
-    panelHeader.style.display = 'flex';
-    panelHeader.style.justifyContent = 'space-between';
-    panelHeader.style.alignItems = 'center';
-    panelHeader.style.marginBottom = '10px';
-    panelHeader.style.paddingBottom = '8px';
-    panelHeader.style.borderBottom = '1px solid rgba(255, 255, 255, 0.1)';
+    // Get the panel (either existing or newly created)
+    const panel = document.getElementById('model-control-panel');
     
-    const panelTitle = document.createElement('div');
-    panelTitle.textContent = 'Model Controls';
-    panelTitle.style.fontWeight = 'bold';
-    panelTitle.style.fontSize = '16px';
-    
-    const minimizeButton = document.createElement('button');
-    minimizeButton.innerHTML = '&minus;';
-    minimizeButton.style.background = 'none';
-    minimizeButton.style.border = 'none';
-    minimizeButton.style.color = 'white';
-    minimizeButton.style.fontSize = '18px';
-    minimizeButton.style.cursor = 'pointer';
-    minimizeButton.style.width = '24px';
-    minimizeButton.style.height = '24px';
-    minimizeButton.style.display = 'flex';
-    minimizeButton.style.justifyContent = 'center';
-    minimizeButton.style.alignItems = 'center';
-    minimizeButton.style.padding = '0';
-    minimizeButton.title = 'Minimize panel';
-    
-    let isPanelMinimized = false;
+    // Create panel content container
     const panelContent = document.createElement('div');
     panelContent.id = 'panel-content';
+    panelContent.style.display = 'flex';
+    panelContent.style.flexDirection = 'column';
+    panelContent.style.gap = '16px';
     
-    minimizeButton.addEventListener('click', () => {
-      isPanelMinimized = !isPanelMinimized;
-      panelContent.style.display = isPanelMinimized ? 'none' : 'block';
-      minimizeButton.innerHTML = isPanelMinimized ? '&#43;' : '&minus;';
-      minimizeButton.title = isPanelMinimized ? 'Expand panel' : 'Minimize panel';
-    });
+    // Add title
+    const title = document.createElement('h3');
+    title.textContent = 'Transform Controls';
+    title.style.margin = '0 0 8px 0';
+    title.style.fontSize = '16px';
+    title.style.fontWeight = '600';
+    panelContent.appendChild(title);
     
-    panelHeader.appendChild(panelTitle);
-    panelHeader.appendChild(minimizeButton);
+    // Create transform buttons container
+    const transformButtonsContainer = document.createElement('div');
+    transformButtonsContainer.style.display = 'grid';
+    transformButtonsContainer.style.gridTemplateColumns = 'repeat(3, 1fr)';
+    transformButtonsContainer.style.gap = '8px';
     
-    // Create transform UI container
-    const transformUIContainer = document.createElement('div');
-    transformUIContainer.style.padding = '8px 10px';
-    transformUIContainer.style.backgroundColor = 'rgba(0, 0, 0, 0.2)';
-    transformUIContainer.style.color = 'white';
-    transformUIContainer.style.borderRadius = '4px';
-    transformUIContainer.style.fontSize = '14px';
-    transformUIContainer.style.marginBottom = '10px';
-    transformUIContainer.style.fontFamily = 'monospace';
-    transformUIContainer.id = 'transform-ui';
+    // Add transform buttons
+    const moveButton = createTransformButton('Move', 'G', 'translate', 'move');
+    const rotateButton = createTransformButton('Rotate', 'R', 'rotate', 'rotate');
+    const scaleButton = createTransformButton('Scale', 'S', 'scale', 'scale');
     
-    // Create transform buttons section
-    const transformButtonsSection = document.createElement('div');
-    transformButtonsSection.style.display = 'flex';
-    transformButtonsSection.style.gap = '8px';
-    transformButtonsSection.style.marginBottom = '10px';
-    
-    // Create transform buttons with icons
-    const createTransformButton = (label, shortcut, action, icon) => {
-      const button = document.createElement('button');
-      button.style.display = 'flex';
-      button.style.flexDirection = 'column';
-      button.style.alignItems = 'center';
-      button.style.padding = '8px';
-      button.style.backgroundColor = 'rgba(79, 70, 229, 0.2)';
-      button.style.border = '1px solid rgba(79, 70, 229, 0.4)';
-      button.style.borderRadius = '4px';
-      button.style.color = 'white';
-      button.style.cursor = 'pointer';
-      button.style.flex = '1';
-      button.title = `${label} (${shortcut})`;
-      
-      const iconElement = document.createElement('div');
-      iconElement.innerHTML = icon;
-      iconElement.style.fontSize = '18px';
-      iconElement.style.marginBottom = '4px';
-      
-      const labelElement = document.createElement('div');
-      labelElement.textContent = label;
-      labelElement.style.fontSize = '12px';
-      
-      const shortcutElement = document.createElement('div');
-      shortcutElement.textContent = `(${shortcut})`;
-      shortcutElement.style.fontSize = '10px';
-      shortcutElement.style.opacity = '0.7';
-      
-      button.appendChild(iconElement);
-      button.appendChild(labelElement);
-      button.appendChild(shortcutElement);
-      
-      button.addEventListener('click', action);
-      
-      button.addEventListener('mouseenter', () => {
-        button.style.backgroundColor = 'rgba(79, 70, 229, 0.4)';
-      });
-      
-      button.addEventListener('mouseleave', () => {
-        button.style.backgroundColor = 'rgba(79, 70, 229, 0.2)';
-      });
-      
-      return button;
-    };
-    
-    // Create transform buttons
-    const moveButton = createTransformButton('Move', 'G', () => {
-      if (threeObjects.current.transformControls) {
-        try {
-          threeObjects.current.transformControls.setMode('translate');
-          threeObjects.current.transformControls.visible = true;
-        } catch (error) {
-          console.error('Error setting transform mode to translate:', error);
-          showTransformError();
-        }
-      } else {
-        console.warn('TransformControls not available');
-        showTransformError();
-      }
-    }, '↖');
-    
-    const rotateButton = createTransformButton('Rotate', 'R', () => {
-      if (threeObjects.current.transformControls) {
-        try {
-          threeObjects.current.transformControls.setMode('rotate');
-          threeObjects.current.transformControls.visible = true;
-        } catch (error) {
-          console.error('Error setting transform mode to rotate:', error);
-          showTransformError();
-        }
-      } else {
-        console.warn('TransformControls not available');
-        showTransformError();
-      }
-    }, '↻');
-    
-    const scaleButton = createTransformButton('Scale', 'S', () => {
-      if (threeObjects.current.transformControls) {
-        try {
-          threeObjects.current.transformControls.setMode('scale');
-          threeObjects.current.transformControls.visible = true;
-        } catch (error) {
-          console.error('Error setting transform mode to scale:', error);
-          showTransformError();
-        }
-      } else {
-        console.warn('TransformControls not available');
-        showTransformError();
-      }
-    }, '⤧');
-    
-    // Helper function to show transform error message
-    const showTransformError = () => {
-      const transformUI = document.getElementById('transform-ui');
-      if (transformUI) {
-        transformUI.textContent = 'Transform controls not available. Try reloading the page.';
-        transformUI.style.color = '#ff5555';
-        
-        // Clear message after 3 seconds
-        setTimeout(() => {
-          if (transformUI) {
-            transformUI.textContent = '';
-            transformUI.style.color = 'white';
-          }
-        }, 3000);
-      }
-    };
-    
-    transformButtonsSection.appendChild(moveButton);
-    transformButtonsSection.appendChild(rotateButton);
-    transformButtonsSection.appendChild(scaleButton);
+    transformButtonsContainer.appendChild(moveButton);
+    transformButtonsContainer.appendChild(rotateButton);
+    transformButtonsContainer.appendChild(scaleButton);
     
     // Create axis constraint section
     const axisSection = document.createElement('div');
-    axisSection.style.marginBottom = '10px';
+    axisSection.style.display = 'flex';
+    axisSection.style.flexDirection = 'column';
+    axisSection.style.gap = '8px';
     
     const axisLabel = document.createElement('div');
     axisLabel.textContent = 'Constraint Axis:';
-    axisLabel.style.marginBottom = '5px';
-    axisLabel.style.fontSize = '12px';
-    axisLabel.style.opacity = '0.8';
+    axisLabel.style.fontSize = '14px';
+    axisLabel.style.fontWeight = '500';
+    axisLabel.style.color = 'rgba(255, 255, 255, 0.8)';
+    axisLabel.style.marginBottom = '4px';
     
-    const axisButtons = document.createElement('div');
-    axisButtons.style.display = 'flex';
-    axisButtons.style.gap = '8px';
+    const axisButtonsContainer = document.createElement('div');
+    axisButtonsContainer.style.display = 'grid';
+    axisButtonsContainer.style.gridTemplateColumns = 'repeat(3, 1fr)';
+    axisButtonsContainer.style.gap = '8px';
     
-    // Create a mapping between standard 3D software labels and Three.js axes
-    const axisMapping = {
-      'x': { threeAxis: 'x', label: 'X', description: 'Left/Right', color: '#ff5555' },
-      'y': { threeAxis: 'y', label: 'Y', description: 'Up/Down', color: '#55ff55' },
-      'z': { threeAxis: 'z', label: 'Z', description: 'Forward/Backward', color: '#5555ff' }
-    };
+    // Add axis buttons
+    const xAxisButton = createAxisButton('x', { color: '#ef4444', key: 'X', label: 'X' });
+    const yAxisButton = createAxisButton('y', { color: '#22c55e', key: 'Y', label: 'Y' });
+    const zAxisButton = createAxisButton('z', { color: '#3b82f6', key: 'Z', label: 'Z' });
     
-    const createAxisButton = (standardAxis, config) => {
-      const button = document.createElement('button');
-      button.textContent = config.label;
-      button.style.flex = '1';
-      button.style.padding = '5px 0';
-      button.style.backgroundColor = 'rgba(0, 0, 0, 0.3)';
-      button.style.border = `1px solid ${config.color}`;
-      button.style.borderRadius = '4px';
-      button.style.color = config.color;
-      button.style.cursor = 'pointer';
-      button.style.fontWeight = 'bold';
-      button.title = `Constrain to ${config.label} axis (${config.description})`;
-      
-      button.addEventListener('click', () => {
-        if (threeObjects.current.transformControls) {
-          try {
-            // Get the corresponding Three.js axis
-            const threeAxis = config.threeAxis;
-            
-            // Set the space to 'world' for consistent axis orientation
-            threeObjects.current.transformControls.setSpace('world');
-            
-            // Check if we're already showing only this axis
-            const isOnlyThisAxisShown = 
-              (threeAxis === 'x' && threeObjects.current.transformControls.showX && 
-               !threeObjects.current.transformControls.showY && !threeObjects.current.transformControls.showZ) ||
-              (threeAxis === 'y' && threeObjects.current.transformControls.showY && 
-               !threeObjects.current.transformControls.showX && !threeObjects.current.transformControls.showZ) ||
-              (threeAxis === 'z' && threeObjects.current.transformControls.showZ && 
-               !threeObjects.current.transformControls.showX && !threeObjects.current.transformControls.showY);
-            
-            if (isOnlyThisAxisShown) {
-              // If only this axis is shown, show all axes
-              threeObjects.current.transformControls.showX = true;
-              threeObjects.current.transformControls.showY = true;
-              threeObjects.current.transformControls.showZ = true;
-            } else {
-              // Otherwise, show only this axis
-              threeObjects.current.transformControls.showX = (threeAxis === 'x');
-              threeObjects.current.transformControls.showY = (threeAxis === 'y');
-              threeObjects.current.transformControls.showZ = (threeAxis === 'z');
-            }
-            
-            // Update transform UI with standard axis label
-            const transformUI = document.getElementById('transform-ui');
-            if (transformUI) {
-              const mode = threeObjects.current.transformControls.mode.charAt(0).toUpperCase() + 
-                          threeObjects.current.transformControls.mode.slice(1);
-              const modeKey = threeObjects.current.transformControls.mode === 'translate' ? 'G' : 
-                             threeObjects.current.transformControls.mode === 'rotate' ? 'R' : 'S';
-              
-              if (threeObjects.current.transformControls.showX && 
-                  threeObjects.current.transformControls.showY && 
-                  threeObjects.current.transformControls.showZ) {
-                transformUI.textContent = `Mode: ${mode} (${modeKey}) | All axes | ESC to cancel`;
-              } else {
-                // Get the label for the visible axis
-                let axisLabel = config.label;
-                
-                transformUI.textContent = `Mode: ${mode} (${modeKey}) | Axis: ${axisLabel} | ESC to cancel`;
-              }
-            }
-          } catch (error) {
-            console.error(`Error constraining to ${config.label} axis:`, error);
-            showTransformError();
-          }
-        } else {
-          // Show message that transform controls must be active
-          console.warn('TransformControls not available');
-          showTransformError();
-        }
-      });
-      
-      button.addEventListener('mouseenter', () => {
-        button.style.backgroundColor = 'rgba(0, 0, 0, 0.5)';
-      });
-      
-      button.addEventListener('mouseleave', () => {
-        button.style.backgroundColor = 'rgba(0, 0, 0, 0.3)';
-      });
-      
-      return button;
-    };
-    
-    // Create buttons with standard 3D software labels
-    const xAxisButton = createAxisButton('x', axisMapping.x);
-    const yAxisButton = createAxisButton('y', axisMapping.y);
-    const zAxisButton = createAxisButton('z', axisMapping.z);
-    
-    axisButtons.appendChild(xAxisButton);
-    axisButtons.appendChild(yAxisButton);
-    axisButtons.appendChild(zAxisButton);
+    axisButtonsContainer.appendChild(xAxisButton);
+    axisButtonsContainer.appendChild(yAxisButton);
+    axisButtonsContainer.appendChild(zAxisButton);
     
     axisSection.appendChild(axisLabel);
-    axisSection.appendChild(axisButtons);
+    axisSection.appendChild(axisButtonsContainer);
     
-    // Create visibility toggles section
+    // Create visibility section
     const visibilitySection = document.createElement('div');
-    visibilitySection.style.marginBottom = '10px';
+    visibilitySection.style.display = 'flex';
+    visibilitySection.style.flexDirection = 'column';
+    visibilitySection.style.gap = '10px';
     
     const visibilityLabel = document.createElement('div');
     visibilityLabel.textContent = 'Visibility:';
-    visibilityLabel.style.marginBottom = '5px';
-    visibilityLabel.style.fontSize = '12px';
-    visibilityLabel.style.opacity = '0.8';
+    visibilityLabel.style.fontSize = '14px';
+    visibilityLabel.style.fontWeight = '500';
+    visibilityLabel.style.color = 'rgba(255, 255, 255, 0.8)';
+    visibilityLabel.style.marginBottom = '4px';
     
-    // Create toggle function
-    const createToggle = (label, initialState, onChange) => {
-      const toggleContainer = document.createElement('div');
-      toggleContainer.style.display = 'flex';
-      toggleContainer.style.justifyContent = 'space-between';
-      toggleContainer.style.alignItems = 'center';
-      toggleContainer.style.marginBottom = '5px';
-      
-      const toggleLabel = document.createElement('label');
-      toggleLabel.textContent = label;
-      toggleLabel.style.flex = '1';
-      toggleLabel.style.cursor = 'pointer';
-      
-      const toggleSwitch = document.createElement('div');
-      toggleSwitch.style.position = 'relative';
-      toggleSwitch.style.width = '36px';
-      toggleSwitch.style.height = '20px';
-      
-      const toggleInput = document.createElement('input');
-      toggleInput.type = 'checkbox';
-      toggleInput.checked = initialState;
-      toggleInput.style.opacity = '0';
-      toggleInput.style.width = '0';
-      toggleInput.style.height = '0';
-      
-      const toggleSlider = document.createElement('span');
-      toggleSlider.style.position = 'absolute';
-      toggleSlider.style.cursor = 'pointer';
-      toggleSlider.style.top = '0';
-      toggleSlider.style.left = '0';
-      toggleSlider.style.right = '0';
-      toggleSlider.style.bottom = '0';
-      toggleSlider.style.backgroundColor = initialState ? 'rgba(79, 70, 229, 0.6)' : 'rgba(255, 255, 255, 0.2)';
-      toggleSlider.style.borderRadius = '10px';
-      toggleSlider.style.transition = 'background-color 0.3s';
-      
-      const toggleKnob = document.createElement('span');
-      toggleKnob.style.position = 'absolute';
-      toggleKnob.style.content = '""';
-      toggleKnob.style.height = '16px';
-      toggleKnob.style.width = '16px';
-      toggleKnob.style.left = initialState ? '18px' : '2px';
-      toggleKnob.style.bottom = '2px';
-      toggleKnob.style.backgroundColor = 'white';
-      toggleKnob.style.borderRadius = '50%';
-      toggleKnob.style.transition = 'left 0.3s';
-      
-      // Function to update toggle state
-      const updateToggleState = (isChecked) => {
-        toggleInput.checked = isChecked;
-        toggleSlider.style.backgroundColor = isChecked ? 'rgba(79, 70, 229, 0.6)' : 'rgba(255, 255, 255, 0.2)';
-        toggleKnob.style.left = isChecked ? '18px' : '2px';
-        
-        // Call the onChange handler
-        if (typeof onChange === 'function') {
-          try {
-            onChange(isChecked);
-            // Force a render update
-            if (threeObjects.current.renderer && threeObjects.current.scene && threeObjects.current.camera) {
-              threeObjects.current.renderer.render(threeObjects.current.scene, threeObjects.current.camera);
-            }
-          } catch (error) {
-            console.error('Error in toggle onChange handler:', error);
-          }
-        }
-      };
-      
-      // Add change event to input
-      toggleInput.addEventListener('change', (e) => {
-        updateToggleState(e.target.checked);
-      });
-      
-      // Add click events to both label and slider for better UX
-      toggleLabel.addEventListener('click', (e) => {
-        e.preventDefault();
-        updateToggleState(!toggleInput.checked);
-      });
-      
-      toggleSlider.addEventListener('click', (e) => {
-        e.preventDefault();
-        updateToggleState(!toggleInput.checked);
-      });
-      
-      toggleSlider.appendChild(toggleKnob);
-      toggleSwitch.appendChild(toggleInput);
-      toggleSwitch.appendChild(toggleSlider);
-      
-      toggleContainer.appendChild(toggleLabel);
-      toggleContainer.appendChild(toggleSwitch);
-      
-      return toggleContainer;
-    };
+    visibilitySection.appendChild(visibilityLabel);
     
-    // Create grid toggle
+    // Add toggles
     const gridToggle = createToggle('Grid', true, (isChecked) => {
-      console.log('Grid toggle changed:', isChecked);
-      if (threeObjects.current.gridHelper) {
-        threeObjects.current.gridHelper.visible = isChecked;
+      if (threeObjects.current && threeObjects.current.grid) {
+        threeObjects.current.grid.visible = isChecked;
       }
     });
     
-    // Create axes toggle
     const axesToggle = createToggle('Axes', true, (isChecked) => {
-      console.log('Axes toggle changed:', isChecked);
-      if (threeObjects.current.axesHelper) {
+      if (threeObjects.current && threeObjects.current.axesHelper) {
         threeObjects.current.axesHelper.visible = isChecked;
       }
     });
     
-    // Create wireframe toggle
     const wireframeToggle = createToggle('Wireframe', false, (isChecked) => {
       console.log('Wireframe toggle changed:', isChecked);
-      if (threeObjects.current.mesh && threeObjects.current.mesh.material) {
+      if (threeObjects.current && threeObjects.current.mesh) {
         if (Array.isArray(threeObjects.current.mesh.material)) {
-          threeObjects.current.mesh.material.forEach(material => {
-            material.wireframe = isChecked;
+          // Handle multi-material case
+          threeObjects.current.mesh.material.forEach(mat => {
+            mat.wireframe = isChecked;
           });
         } else {
+          // Handle single material case
           threeObjects.current.mesh.material.wireframe = isChecked;
         }
       }
     });
     
-    visibilitySection.appendChild(visibilityLabel);
     visibilitySection.appendChild(gridToggle);
     visibilitySection.appendChild(axesToggle);
     visibilitySection.appendChild(wireframeToggle);
@@ -1319,261 +957,271 @@ window.ModelViewer = function ModelViewer({ filePath }) {
     const resetButton = document.createElement('button');
     resetButton.textContent = 'Reset Model Position';
     resetButton.style.width = '100%';
-    resetButton.style.padding = '8px';
-    resetButton.style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
-    resetButton.style.border = '1px solid rgba(239, 68, 68, 0.4)';
-    resetButton.style.borderRadius = '4px';
+    resetButton.style.padding = '10px 12px';
+    resetButton.style.backgroundColor = '#475569';
     resetButton.style.color = 'white';
+    resetButton.style.border = 'none';
+    resetButton.style.borderRadius = '6px';
     resetButton.style.cursor = 'pointer';
-    resetButton.style.marginTop = '5px';
+    resetButton.style.fontWeight = '500';
+    resetButton.style.fontSize = '14px';
+    resetButton.style.transition = 'all 0.2s ease';
+    
+    resetButton.addEventListener('mouseenter', () => {
+      resetButton.style.backgroundColor = '#64748b';
+    });
+    
+    resetButton.addEventListener('mouseleave', () => {
+      resetButton.style.backgroundColor = '#475569';
+    });
     
     resetButton.addEventListener('click', () => {
-      if (threeObjects.current.mesh) {
-        // Reset position, rotation and scale
+      if (threeObjects.current && threeObjects.current.mesh) {
         threeObjects.current.mesh.position.set(0, 0, 0);
         threeObjects.current.mesh.rotation.set(0, 0, 0);
+        threeObjects.current.mesh.scale.set(1, 1, 1);
         
-        // Get original scale from model loading
-        const geometry = threeObjects.current.mesh.geometry;
-        geometry.computeBoundingBox();
-        const size = geometry.boundingBox.getSize(new THREE.Vector3());
-        const maxDim = Math.max(size.x, size.y, size.z);
-        const scale = 30 / maxDim;
+        // Reset camera position
+        if (threeObjects.current.camera) {
+          threeObjects.current.camera.position.set(0, 0, 5);
+          threeObjects.current.camera.lookAt(0, 0, 0);
+        }
         
-        threeObjects.current.mesh.scale.set(scale, scale, scale);
-        
-        // Update transform controls
-        if (threeObjects.current.transformControls) {
-          threeObjects.current.transformControls.update();
+        // Reset controls
+        if (threeObjects.current.controls) {
+          threeObjects.current.controls.reset();
         }
       }
     });
     
-    resetButton.addEventListener('mouseenter', () => {
-      resetButton.style.backgroundColor = 'rgba(239, 68, 68, 0.4)';
+    // Create keyboard shortcuts button
+    const shortcutsButton = document.createElement('button');
+    shortcutsButton.textContent = 'Keyboard Shortcuts';
+    shortcutsButton.style.width = '100%';
+    shortcutsButton.style.padding = '10px 12px';
+    shortcutsButton.style.backgroundColor = '#1e293b';
+    shortcutsButton.style.color = 'white';
+    shortcutsButton.style.border = 'none';
+    shortcutsButton.style.borderRadius = '6px';
+    shortcutsButton.style.cursor = 'pointer';
+    shortcutsButton.style.fontWeight = '500';
+    shortcutsButton.style.fontSize = '14px';
+    shortcutsButton.style.transition = 'all 0.2s ease';
+    
+    shortcutsButton.addEventListener('mouseenter', () => {
+      shortcutsButton.style.backgroundColor = '#334155';
     });
     
-    resetButton.addEventListener('mouseleave', () => {
-      resetButton.style.backgroundColor = 'rgba(239, 68, 68, 0.2)';
+    shortcutsButton.addEventListener('mouseleave', () => {
+      shortcutsButton.style.backgroundColor = '#1e293b';
     });
     
-    // Create help button
-    const helpButton = document.createElement('button');
-    helpButton.textContent = 'Keyboard Shortcuts';
-    helpButton.style.width = '100%';
-    helpButton.style.padding = '8px';
-    helpButton.style.backgroundColor = 'rgba(79, 70, 229, 0.2)';
-    helpButton.style.border = '1px solid rgba(79, 70, 229, 0.4)';
-    helpButton.style.borderRadius = '4px';
-    helpButton.style.color = 'white';
-    helpButton.style.cursor = 'pointer';
-    helpButton.style.marginTop = '10px';
-    
-    helpButton.addEventListener('click', () => {
-      setShowHelp(prev => !prev);
+    shortcutsButton.addEventListener('click', () => {
+      alert(
+        'Keyboard Shortcuts:\n\n' +
+        'G: Activate Move Tool\n' +
+        'R: Activate Rotate Tool\n' +
+        'S: Activate Scale Tool\n\n' +
+        'X: Constrain to X axis (Red)\n' +
+        'Y: Constrain to Y axis (Green)\n' +
+        'Z: Constrain to Z axis (Blue)\n\n' +
+        'Esc: Cancel current operation\n' +
+        'Enter: Confirm current operation'
+      );
     });
     
-    helpButton.addEventListener('mouseenter', () => {
-      helpButton.style.backgroundColor = 'rgba(79, 70, 229, 0.4)';
-    });
-    
-    helpButton.addEventListener('mouseleave', () => {
-      helpButton.style.backgroundColor = 'rgba(79, 70, 229, 0.2)';
-    });
-    
-    // Assemble panel content
-    panelContent.appendChild(transformUIContainer);
-    panelContent.appendChild(transformButtonsSection);
+    // Assemble panel
+    panelContent.appendChild(transformButtonsContainer);
     panelContent.appendChild(axisSection);
     panelContent.appendChild(visibilitySection);
     panelContent.appendChild(resetButton);
-    panelContent.appendChild(helpButton);
+    panelContent.appendChild(shortcutsButton);
     
-    // Assemble control panel
-    controlPanel.appendChild(panelHeader);
-    controlPanel.appendChild(panelContent);
+    panel.appendChild(panelContent);
+  };
+  
+  const createTransformButton = (label, shortcut, action, icon) => {
+    const button = document.createElement('button');
+    button.style.display = 'flex';
+    button.style.flexDirection = 'column';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
+    button.style.padding = '12px 8px';
+    button.style.backgroundColor = '#1e293b';
+    button.style.border = 'none';
+    button.style.borderRadius = '8px';
+    button.style.cursor = 'pointer';
+    button.style.color = 'white';
+    button.style.transition = 'all 0.2s ease';
     
-    // Create help panel
-    const helpPanel = document.createElement('div');
-    helpPanel.style.position = 'absolute';
-    helpPanel.style.top = '50%';
-    helpPanel.style.left = '50%';
-    helpPanel.style.transform = 'translate(-50%, -50%)';
-    helpPanel.style.padding = '20px';
-    helpPanel.style.backgroundColor = 'rgba(0, 0, 0, 0.9)';
-    helpPanel.style.color = 'white';
-    helpPanel.style.borderRadius = '8px';
-    helpPanel.style.fontSize = '14px';
-    helpPanel.style.zIndex = '40';
-    helpPanel.style.fontFamily = 'system-ui, -apple-system, sans-serif';
-    helpPanel.style.boxShadow = '0 4px 20px rgba(0, 0, 0, 0.5)';
-    helpPanel.style.backdropFilter = 'blur(10px)';
-    helpPanel.style.border = '1px solid rgba(255, 255, 255, 0.1)';
-    helpPanel.style.width = '400px';
-    helpPanel.style.maxWidth = '90vw';
-    helpPanel.style.display = 'none';
-    helpPanel.id = 'help-panel';
+    // Create icon
+    const iconElement = document.createElement('div');
+    iconElement.style.marginBottom = '6px';
     
-    // Create help panel header
-    const helpPanelHeader = document.createElement('div');
-    helpPanelHeader.style.display = 'flex';
-    helpPanelHeader.style.justifyContent = 'space-between';
-    helpPanelHeader.style.alignItems = 'center';
-    helpPanelHeader.style.marginBottom = '15px';
-    helpPanelHeader.style.paddingBottom = '10px';
-    helpPanelHeader.style.borderBottom = '1px solid rgba(255, 255, 255, 0.2)';
+    if (icon === 'move') {
+      iconElement.innerHTML = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 9l-3 3 3 3"></path>
+          <path d="M9 5l3-3 3 3"></path>
+          <path d="M15 19l3-3 3 3"></path>
+          <path d="M19 9l3 3-3 3"></path>
+          <path d="M2 12h20"></path>
+          <path d="M12 2v20"></path>
+        </svg>
+      `;
+    } else if (icon === 'rotate') {
+      iconElement.innerHTML = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.5 2v6h-6"></path>
+          <path d="M2.5 12.5v-6h6"></path>
+          <path d="M2.5 12.5a9 9 0 0 0 9 9 9 9 0 0 0 6.54-2.77"></path>
+          <path d="M21.5 2a9 9 0 0 0-9 9 9 9 0 0 0-2.77 6.54"></path>
+        </svg>
+      `;
+    } else if (icon === 'scale') {
+      iconElement.innerHTML = `
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 3L3 21"></path>
+          <path d="M21 21L3 3"></path>
+        </svg>
+      `;
+    }
     
-    const helpPanelTitle = document.createElement('div');
-    helpPanelTitle.textContent = 'Keyboard Shortcuts';
-    helpPanelTitle.style.fontWeight = 'bold';
-    helpPanelTitle.style.fontSize = '18px';
+    // Create label
+    const labelElement = document.createElement('div');
+    labelElement.textContent = label;
+    labelElement.style.fontSize = '12px';
+    labelElement.style.fontWeight = '500';
     
-    const closeHelpButton = document.createElement('button');
-    closeHelpButton.innerHTML = '&times;';
-    closeHelpButton.style.background = 'none';
-    closeHelpButton.style.border = 'none';
-    closeHelpButton.style.color = 'white';
-    closeHelpButton.style.fontSize = '24px';
-    closeHelpButton.style.cursor = 'pointer';
-    closeHelpButton.style.width = '24px';
-    closeHelpButton.style.height = '24px';
-    closeHelpButton.style.display = 'flex';
-    closeHelpButton.style.justifyContent = 'center';
-    closeHelpButton.style.alignItems = 'center';
-    closeHelpButton.style.padding = '0';
-    closeHelpButton.title = 'Close';
+    // Create shortcut indicator
+    const shortcutElement = document.createElement('div');
+    shortcutElement.textContent = `(${shortcut})`;
+    shortcutElement.style.fontSize = '10px';
+    shortcutElement.style.opacity = '0.7';
+    shortcutElement.style.marginTop = '2px';
     
-    closeHelpButton.addEventListener('click', () => {
-      setShowHelp(false);
+    button.appendChild(iconElement);
+    button.appendChild(labelElement);
+    button.appendChild(shortcutElement);
+    
+    button.addEventListener('mouseenter', () => {
+      button.style.backgroundColor = '#334155';
+      button.style.transform = 'translateY(-2px)';
     });
     
-    helpPanelHeader.appendChild(helpPanelTitle);
-    helpPanelHeader.appendChild(closeHelpButton);
-    
-    // Create shortcut table
-    const shortcutTable = document.createElement('table');
-    shortcutTable.style.width = '100%';
-    shortcutTable.style.borderCollapse = 'collapse';
-    
-    // Add table header
-    const tableHeader = document.createElement('thead');
-    const headerRow = document.createElement('tr');
-    
-    const keyHeader = document.createElement('th');
-    keyHeader.textContent = 'Key';
-    keyHeader.style.textAlign = 'left';
-    keyHeader.style.padding = '8px';
-    keyHeader.style.borderBottom = '1px solid rgba(255, 255, 255, 0.1)';
-    keyHeader.style.width = '30%';
-    
-    const actionHeader = document.createElement('th');
-    actionHeader.textContent = 'Action';
-    actionHeader.style.textAlign = 'left';
-    actionHeader.style.padding = '8px';
-    actionHeader.style.borderBottom = '1px solid rgba(255, 255, 255, 0.1)';
-    
-    headerRow.appendChild(keyHeader);
-    headerRow.appendChild(actionHeader);
-    tableHeader.appendChild(headerRow);
-    shortcutTable.appendChild(tableHeader);
-    
-    // Add table body
-    const tableBody = document.createElement('tbody');
-    
-    // Define shortcuts
-    const shortcuts = [
-      { key: 'G', action: 'Grab/Move object' },
-      { key: 'R', action: 'Rotate object' },
-      { key: 'S', action: 'Scale object' },
-      { key: 'X', action: 'Constrain to X axis' },
-      { key: 'Y', action: 'Constrain to Y axis' },
-      { key: 'Z', action: 'Constrain to Z axis' },
-      { key: 'ESC', action: 'Cancel current operation' },
-      { key: 'H', action: 'Toggle help panel' },
-      { key: 'Mouse Wheel', action: 'Zoom in/out' },
-      { key: 'Middle Mouse', action: 'Orbit view' },
-      { key: 'Shift + Middle Mouse', action: 'Pan view' }
-    ];
-    
-    // Add shortcuts to table
-    shortcuts.forEach(shortcut => {
-      const row = document.createElement('tr');
-      
-      const keyCell = document.createElement('td');
-      keyCell.style.padding = '8px';
-      keyCell.style.borderBottom = '1px solid rgba(255, 255, 255, 0.1)';
-      
-      const keySpan = document.createElement('span');
-      keySpan.textContent = shortcut.key;
-      keySpan.style.backgroundColor = 'rgba(255, 255, 255, 0.1)';
-      keySpan.style.padding = '2px 6px';
-      keySpan.style.borderRadius = '4px';
-      keySpan.style.fontFamily = 'monospace';
-      
-      keyCell.appendChild(keySpan);
-      
-      const actionCell = document.createElement('td');
-      actionCell.textContent = shortcut.action;
-      actionCell.style.padding = '8px';
-      actionCell.style.borderBottom = '1px solid rgba(255, 255, 255, 0.1)';
-      
-      row.appendChild(keyCell);
-      row.appendChild(actionCell);
-      tableBody.appendChild(row);
+    button.addEventListener('mouseleave', () => {
+      button.style.backgroundColor = '#1e293b';
+      button.style.transform = 'translateY(0)';
     });
     
-    shortcutTable.appendChild(tableBody);
+    button.addEventListener('click', () => {
+      if (threeObjects.current && threeObjects.current.transformControls) {
+        const mode = action;
+        threeObjects.current.transformControls.setMode(mode);
+        threeObjects.current.transformControls.attach(threeObjects.current.mesh);
+        
+        // Update active state of buttons
+        const allButtons = document.querySelectorAll('#model-control-panel button');
+        allButtons.forEach(btn => {
+          if (btn === button) {
+            btn.style.backgroundColor = '#3b82f6';
+          } else if (btn.classList.contains('transform-button')) {
+            btn.style.backgroundColor = '#1e293b';
+          }
+        });
+        
+        button.classList.add('active');
+      } else {
+        showTransformError();
+      }
+    });
     
-    // Add note at the bottom
-    const helpNote = document.createElement('p');
-    helpNote.textContent = 'Note: These shortcuts mimic Blender\'s transformation system for a familiar workflow.';
-    helpNote.style.marginTop = '15px';
-    helpNote.style.fontSize = '12px';
-    helpNote.style.opacity = '0.7';
-    helpNote.style.fontStyle = 'italic';
+    button.classList.add('transform-button');
+    return button;
+  };
+  
+  const createAxisButton = (standardAxis, config) => {
+    const button = document.createElement('button');
+    button.textContent = config.label;
+    button.style.padding = '8px 0';
+    button.style.backgroundColor = '#1e293b';
+    button.style.color = config.color;
+    button.style.border = 'none';
+    button.style.borderRadius = '6px';
+    button.style.cursor = 'pointer';
+    button.style.fontWeight = '600';
+    button.style.fontSize = '14px';
+    button.style.transition = 'all 0.2s ease';
+    button.style.boxShadow = `0 0 0 1px ${config.color}40`;
     
-    // Add coordinate system explanation
-    const coordSystemNote = document.createElement('div');
-    coordSystemNote.style.marginTop = '15px';
-    coordSystemNote.style.padding = '10px';
-    coordSystemNote.style.backgroundColor = 'rgba(79, 70, 229, 0.1)';
-    coordSystemNote.style.borderRadius = '4px';
-    coordSystemNote.style.fontSize = '12px';
+    button.addEventListener('mouseenter', () => {
+      button.style.backgroundColor = '#334155';
+      button.style.transform = 'translateY(-2px)';
+      button.style.boxShadow = `0 0 0 2px ${config.color}60`;
+    });
     
-    const coordTitle = document.createElement('div');
-    coordTitle.textContent = 'Coordinate System';
-    coordTitle.style.fontWeight = 'bold';
-    coordTitle.style.marginBottom = '5px';
+    button.addEventListener('mouseleave', () => {
+      button.style.backgroundColor = '#1e293b';
+      button.style.transform = 'translateY(0)';
+      button.style.boxShadow = `0 0 0 1px ${config.color}40`;
+    });
     
-    const coordDesc = document.createElement('div');
-    coordDesc.innerHTML = `
-      <div style="margin-bottom: 5px;">Standard 3D coordinate system:</div>
-      <div style="display: flex; margin-bottom: 3px;">
-        <span style="color: #ff5555; width: 20px; font-weight: bold;">X:</span>
-        <span>Left/Right (Red)</span>
-      </div>
-      <div style="display: flex; margin-bottom: 3px;">
-        <span style="color: #55ff55; width: 20px; font-weight: bold;">Y:</span>
-        <span>Forward/Backward (Green)</span>
-      </div>
-      <div style="display: flex;">
-        <span style="color: #5555ff; width: 20px; font-weight: bold;">Z:</span>
-        <span>Up/Down (Blue)</span>
-      </div>
-    `;
+    button.addEventListener('click', () => {
+      if (threeObjects.current && threeObjects.current.transformControls) {
+        // Get the corresponding Three.js axis
+        const threeAxis = standardAxis;
+        
+        // Set the space to 'world' for consistent axis orientation
+        threeObjects.current.transformControls.setSpace('world');
+        
+        // Check if we're already showing only this axis
+        const isOnlyThisAxisShown = 
+          (threeAxis === 'x' && threeObjects.current.transformControls.showX && 
+           !threeObjects.current.transformControls.showY && !threeObjects.current.transformControls.showZ) ||
+          (threeAxis === 'y' && threeObjects.current.transformControls.showY && 
+           !threeObjects.current.transformControls.showX && !threeObjects.current.transformControls.showZ) ||
+          (threeAxis === 'z' && threeObjects.current.transformControls.showZ && 
+           !threeObjects.current.transformControls.showX && !threeObjects.current.transformControls.showY);
+        
+        if (isOnlyThisAxisShown) {
+          // If only this axis is shown, show all axes
+          threeObjects.current.transformControls.showX = true;
+          threeObjects.current.transformControls.showY = true;
+          threeObjects.current.transformControls.showZ = true;
+          
+          // Reset button styles
+          const axisButtons = document.querySelectorAll('#model-control-panel button:not(.transform-button)');
+          axisButtons.forEach(btn => {
+            if (btn !== button && !btn.id && !btn.classList.contains('transform-button')) {
+              btn.style.backgroundColor = '#1e293b';
+              btn.style.boxShadow = `0 0 0 1px ${btn.style.color}40`;
+            }
+          });
+        } else {
+          // Otherwise, show only this axis
+          threeObjects.current.transformControls.showX = (threeAxis === 'x');
+          threeObjects.current.transformControls.showY = (threeAxis === 'y');
+          threeObjects.current.transformControls.showZ = (threeAxis === 'z');
+          
+          // Update button styles
+          const axisButtons = document.querySelectorAll('#model-control-panel button:not(.transform-button)');
+          axisButtons.forEach(btn => {
+            if (btn !== button && !btn.id && !btn.classList.contains('transform-button')) {
+              btn.style.backgroundColor = '#1e293b';
+              btn.style.boxShadow = `0 0 0 1px ${btn.style.color}40`;
+            }
+          });
+          
+          // Highlight this button
+          button.style.backgroundColor = `${config.color}20`;
+          button.style.boxShadow = `0 0 0 2px ${config.color}`;
+        }
+      } else {
+        showTransformError();
+      }
+    });
     
-    coordSystemNote.appendChild(coordTitle);
-    coordSystemNote.appendChild(coordDesc);
-    
-    // Assemble help panel
-    helpPanel.appendChild(helpPanelHeader);
-    helpPanel.appendChild(shortcutTable);
-    helpPanel.appendChild(helpNote);
-    helpPanel.appendChild(coordSystemNote);
-    
-    // Add UI elements to container
-    containerRef.current.appendChild(controlPanel);
-    containerRef.current.appendChild(helpPanel);
+    return button;
   };
   
   // Toggle help panel visibility
@@ -1669,7 +1317,7 @@ window.ModelViewer = function ModelViewer({ filePath }) {
               flex-direction: column;
               align-items: center;
               justify-content: center;
-              background-color: #121212;
+              background-color: #2a2a2a;
               color: #ff4444;
               text-align: center;
               padding: 20px;
@@ -1700,6 +1348,13 @@ window.ModelViewer = function ModelViewer({ filePath }) {
         window.modelViewerGlobals.activeInstance = null;
       }
       
+      // Clean up resize observer if it exists
+      if (threeObjects.current.resizeObserver) {
+        threeObjects.current.resizeObserver.disconnect();
+        threeObjects.current.resizeObserver = null;
+      }
+      
+      // Remove window resize event listener
       window.removeEventListener('resize', handleResize);
       
       // Cancel animation frame
@@ -1714,97 +1369,8 @@ window.ModelViewer = function ModelViewer({ filePath }) {
         renderer.domElement.removeEventListener('click', handleMeasurementClick);
       }
       
-      // Remove keyboard and mouse event listeners
-      window.removeEventListener('keydown', handleKeyDown);
-      
-      // Clean up the scene and resources
-      const { scene, controls, mesh, measurementLine } = threeObjects.current;
-      
-      // Dispose mesh
-      if (mesh) {
-        if (scene) scene.remove(mesh);
-        if (mesh.geometry) mesh.geometry.dispose();
-        if (mesh.material) {
-          if (Array.isArray(mesh.material)) {
-            mesh.material.forEach(material => material.dispose());
-          } else {
-            mesh.material.dispose();
-          }
-        }
-        threeObjects.current.mesh = null;
-      }
-      
-      // Dispose measurement line
-      if (measurementLine) {
-        if (scene) scene.remove(measurementLine);
-        if (measurementLine.geometry) measurementLine.geometry.dispose();
-        if (measurementLine.material) measurementLine.material.dispose();
-        threeObjects.current.measurementLine = null;
-      }
-      
-      // Dispose controls
-      if (controls) {
-        controls.dispose();
-        threeObjects.current.controls = null;
-      }
-      
-      // Dispose renderer
-      if (renderer) {
-        renderer.dispose();
-        if (renderer.domElement && renderer.domElement.parentNode) {
-          try {
-            renderer.domElement.parentNode.removeChild(renderer.domElement);
-          } catch (e) {
-            console.error('Error removing renderer DOM element:', e);
-          }
-        }
-        threeObjects.current.renderer = null;
-      }
-      
-      // Clear scene
-      if (scene) {
-        while(scene.children.length > 0) { 
-          const object = scene.children[0];
-          scene.remove(object);
-        }
-        threeObjects.current.scene = null;
-      }
-      
-      // Clean up UI elements
-      if (containerRef.current) {
-        // Remove control panel
-        const controlPanel = document.getElementById('model-control-panel');
-        if (controlPanel && controlPanel.parentNode) {
-          controlPanel.parentNode.removeChild(controlPanel);
-        }
-        
-        // Remove help panel
-        const helpPanel = document.getElementById('help-panel');
-        if (helpPanel && helpPanel.parentNode) {
-          helpPanel.parentNode.removeChild(helpPanel);
-        }
-        
-        // Remove transform UI
-        const transformUI = document.getElementById('transform-ui');
-        if (transformUI && transformUI.parentNode) {
-          transformUI.parentNode.removeChild(transformUI);
-        }
-        
-        // Remove measurement UI
-        const measurementUI = document.getElementById('measurement-ui');
-        if (measurementUI && measurementUI.parentNode) {
-          measurementUI.parentNode.removeChild(measurementUI);
-        }
-      }
-      
-      // Reset state
-      setModelLoaded(false);
-      setTransformMode(null);
-      setTransformAxis(null);
-      setShowHelp(false);
-      setIsMeasuring(false);
-      setMeasurePoints([]);
-      setMeasureDistance(null);
+      // Call the global cleanup function
+      window.threeJsCleanup(instanceId.current);
     };
   }, [filePath, initThreeJs, animate, handleResize, loadModel, handleMeasurementClick, handleKeyDown]);
   
@@ -1849,8 +1415,392 @@ window.ModelViewer = function ModelViewer({ filePath }) {
     };
   }, [handleKeyDown, modelLoaded]);
   
+  // Add "Add Another View" button to the control panel
+  const addAnotherViewButton = () => {
+    console.log('addAnotherViewButton: Starting function');
+    
+    // Check if we're in a multi-viewer container
+    const isInMultiViewer = containerRef.current && 
+                           containerRef.current.closest('.multi-viewer-container') !== null;
+    
+    console.log('addAnotherViewButton: isInMultiViewer =', isInMultiViewer);
+    
+    // Find the control panel
+    const controlPanel = document.getElementById('model-control-panel');
+    console.log('addAnotherViewButton: controlPanel =', controlPanel);
+    
+    if (!controlPanel) {
+      console.log('addAnotherViewButton: No control panel found');
+      return;
+    }
+    
+    // Check if button already exists
+    const existingButton = document.getElementById('add-another-view-button');
+    console.log('addAnotherViewButton: existingButton =', existingButton);
+    
+    if (existingButton) {
+      console.log('addAnotherViewButton: Button already exists, skipping creation');
+      return;
+    }
+    
+    // Find the panel content
+    const panelContent = document.getElementById('panel-content');
+    console.log('addAnotherViewButton: panelContent =', panelContent);
+    
+    if (!panelContent) {
+      console.log('addAnotherViewButton: No panel content found');
+      return;
+    }
+    
+    // Create the button
+    const button = document.createElement('button');
+    button.id = 'add-another-view-button';
+    button.textContent = 'Add Another View';
+    button.style.width = '100%';
+    button.style.padding = '10px 12px';
+    button.style.background = 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)';
+    button.style.border = 'none';
+    button.style.borderRadius = '6px';
+    button.style.color = 'white';
+    button.style.cursor = 'pointer';
+    button.style.marginTop = '16px';
+    button.style.fontWeight = '500';
+    button.style.fontSize = '14px';
+    button.style.display = 'flex';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
+    button.style.gap = '8px';
+    button.style.boxShadow = '0px 4px 6px rgba(0, 0, 0, 0.1)';
+    button.style.transition = '0.3s';
+    button.style.transform = 'translateY(0px)';
+    
+    // Add hover effect
+    button.addEventListener('mouseenter', () => {
+      button.style.transform = 'translateY(-2px)';
+      button.style.boxShadow = '0px 6px 12px rgba(0, 0, 0, 0.15)';
+    });
+    
+    button.addEventListener('mouseleave', () => {
+      button.style.transform = 'translateY(0px)';
+      button.style.boxShadow = '0px 4px 6px rgba(0, 0, 0, 0.1)';
+    });
+    
+    // Add plus icon
+    const plusIcon = document.createElement('span');
+    plusIcon.innerHTML = `
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"></line>
+        <line x1="5" y1="12" x2="19" y2="12"></line>
+      </svg>
+    `;
+    button.prepend(plusIcon);
+    
+    // Add click handler
+    button.addEventListener('click', () => {
+      console.log('Add another view button clicked');
+      
+      // SIMPLIFIED APPROACH: Just use the global instance directly
+      if (window.multiViewerInstance && typeof window.multiViewerInstance.handleAddAnotherView === 'function') {
+        console.log('Using global multiViewerInstance.handleAddAnotherView');
+        window.multiViewerInstance.handleAddAnotherView({
+          detail: { filePath: filePath }
+        });
+        return;
+      }
+      
+      // Fallback: If no global instance, try to find the container and dispatch event
+      const multiViewerContainer = document.querySelector('.multi-viewer-container') || 
+                                  document.getElementById('multi-viewer-container');
+      
+      if (multiViewerContainer) {
+        console.log('Found multi-viewer container, dispatching event');
+        const event = new CustomEvent('addAnotherView', {
+          bubbles: true,
+          detail: { filePath: filePath }
+        });
+        multiViewerContainer.dispatchEvent(event);
+      } else {
+        // Last resort: Dispatch on document and window
+        console.log('No multi-viewer container found, dispatching on document and window');
+        
+        const event = new CustomEvent('addAnotherView', {
+          bubbles: true,
+          detail: { filePath: filePath }
+        });
+        
+        document.dispatchEvent(event);
+        window.dispatchEvent(event);
+      }
+    });
+    
+    // Add the button to the panel
+    panelContent.appendChild(button);
+    console.log('addAnotherViewButton: Button added to panel');
+  };
+  
+  // Make sure to call addAnotherViewButton after the UI is created
+  React.useEffect(() => {
+    if (filePath && containerRef.current) {
+      // Wait a bit for the UI to be fully created
+      setTimeout(() => {
+        console.log('Calling addAnotherViewButton after timeout');
+        addAnotherViewButton();
+      }, 1000);
+    }
+  }, [filePath]);
+  
+  // Also add a direct button to the container for better visibility
+  React.useEffect(() => {
+    if (filePath && containerRef.current) {
+      console.log('Setting up floating add view button');
+      
+      // Check if we're in a multi-viewer container
+      const isInMultiViewer = containerRef.current.closest('.multi-viewer-container') !== null;
+      console.log('Floating button: isInMultiViewer =', isInMultiViewer);
+      
+      // Only add the floating button if we're not in a multi-viewer container
+      if (isInMultiViewer) {
+        console.log('Already in multi-viewer container, skipping floating button');
+        return;
+      }
+      
+      // Check if the button already exists
+      if (containerRef.current.querySelector('#floating-add-view-button')) {
+        console.log('Floating add view button already exists');
+        return;
+      }
+      
+      // Create a floating button
+      const floatingButton = document.createElement('button');
+      floatingButton.id = 'floating-add-view-button';
+      floatingButton.innerHTML = `
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"></line>
+          <line x1="5" y1="12" x2="19" y2="12"></line>
+        </svg>
+        <span>Add View</span>
+      `;
+      
+      // Style the button
+      floatingButton.style.position = 'absolute';
+      floatingButton.style.bottom = '20px';
+      floatingButton.style.right = '20px';
+      floatingButton.style.background = 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)';
+      floatingButton.style.color = 'white';
+      floatingButton.style.padding = '10px 16px';
+      floatingButton.style.borderRadius = '8px';
+      floatingButton.style.border = 'none';
+      floatingButton.style.boxShadow = '0 4px 12px rgba(139, 92, 246, 0.3)';
+      floatingButton.style.cursor = 'pointer';
+      floatingButton.style.display = 'flex';
+      floatingButton.style.alignItems = 'center';
+      floatingButton.style.gap = '8px';
+      floatingButton.style.fontSize = '14px';
+      floatingButton.style.fontWeight = '500';
+      floatingButton.style.transition = 'all 0.3s ease';
+      floatingButton.style.zIndex = '1000';
+      
+      floatingButton.addEventListener('mouseenter', () => {
+        floatingButton.style.transform = 'translateY(-2px)';
+        floatingButton.style.boxShadow = '0 6px 16px rgba(139, 92, 246, 0.5)';
+      });
+      
+      floatingButton.addEventListener('mouseleave', () => {
+        floatingButton.style.transform = 'translateY(0)';
+        floatingButton.style.boxShadow = '0 4px 12px rgba(139, 92, 246, 0.3)';
+      });
+      
+      floatingButton.addEventListener('click', () => {
+        console.log('Floating add view button clicked');
+        
+        // SIMPLIFIED APPROACH: Just use the global instance directly
+        if (window.multiViewerInstance && typeof window.multiViewerInstance.handleAddAnotherView === 'function') {
+          console.log('Using global multiViewerInstance.handleAddAnotherView');
+          window.multiViewerInstance.handleAddAnotherView({
+            detail: { filePath: filePath }
+          });
+          return;
+        }
+        
+        // Fallback: If no global instance, try to find the container and dispatch event
+        const multiViewerContainer = document.querySelector('.multi-viewer-container') || 
+                                    document.getElementById('multi-viewer-container');
+        
+        if (multiViewerContainer) {
+          console.log('Found multi-viewer container, dispatching event');
+          const event = new CustomEvent('addAnotherView', {
+            bubbles: true,
+            detail: { filePath: filePath }
+          });
+          multiViewerContainer.dispatchEvent(event);
+        } else {
+          // Last resort: Dispatch on document and window
+          console.log('No multi-viewer container found, dispatching on document and window');
+          
+          const event = new CustomEvent('addAnotherView', {
+            bubbles: true,
+            detail: { filePath: filePath }
+          });
+          
+          document.dispatchEvent(event);
+          window.dispatchEvent(event);
+        }
+      });
+      
+      // Add the button to the container
+      containerRef.current.appendChild(floatingButton);
+      console.log('Floating add view button added to container');
+    }
+  }, [filePath]);
+  
+  const createToggle = (label, initialState, onChange) => {
+    const toggleContainer = document.createElement('div');
+    toggleContainer.style.display = 'flex';
+    toggleContainer.style.justifyContent = 'space-between';
+    toggleContainer.style.alignItems = 'center';
+    toggleContainer.style.padding = '8px 0';
+    
+    const toggleLabel = document.createElement('label');
+    toggleLabel.textContent = label;
+    toggleLabel.style.flex = '1';
+    toggleLabel.style.cursor = 'pointer';
+    toggleLabel.style.fontSize = '14px';
+    toggleLabel.style.fontWeight = '400';
+    
+    const toggleSwitch = document.createElement('div');
+    toggleSwitch.style.position = 'relative';
+    toggleSwitch.style.width = '40px';
+    toggleSwitch.style.height = '22px';
+    
+    const toggleInput = document.createElement('input');
+    toggleInput.type = 'checkbox';
+    toggleInput.checked = initialState;
+    toggleInput.style.opacity = '0';
+    toggleInput.style.width = '0';
+    toggleInput.style.height = '0';
+    
+    const toggleSlider = document.createElement('span');
+    toggleSlider.style.position = 'absolute';
+    toggleSlider.style.cursor = 'pointer';
+    toggleSlider.style.top = '0';
+    toggleSlider.style.left = '0';
+    toggleSlider.style.right = '0';
+    toggleSlider.style.bottom = '0';
+    toggleSlider.style.backgroundColor = initialState ? '#4f46e5' : '#334155';
+    toggleSlider.style.borderRadius = '11px';
+    toggleSlider.style.transition = 'all 0.3s ease';
+    
+    const toggleKnob = document.createElement('span');
+    toggleKnob.style.position = 'absolute';
+    toggleKnob.style.content = '""';
+    toggleKnob.style.height = '18px';
+    toggleKnob.style.width = '18px';
+    toggleKnob.style.left = initialState ? '20px' : '2px';
+    toggleKnob.style.bottom = '2px';
+    toggleKnob.style.backgroundColor = 'white';
+    toggleKnob.style.borderRadius = '50%';
+    toggleKnob.style.transition = 'all 0.3s ease';
+    toggleKnob.style.boxShadow = '0 2px 4px rgba(0, 0, 0, 0.2)';
+    
+    // Function to update toggle state
+    const updateToggleState = (isChecked) => {
+      toggleInput.checked = isChecked;
+      toggleSlider.style.backgroundColor = isChecked ? '#4f46e5' : '#334155';
+      toggleKnob.style.left = isChecked ? '20px' : '2px';
+      
+      // Call the onChange handler
+      if (typeof onChange === 'function') {
+        onChange(isChecked);
+      }
+    };
+    
+    // Add change event to input
+    toggleInput.addEventListener('change', (e) => {
+      updateToggleState(e.target.checked);
+    });
+    
+    // Add click events to both label and slider for better UX
+    toggleLabel.addEventListener('click', (e) => {
+      e.preventDefault();
+      updateToggleState(!toggleInput.checked);
+    });
+    
+    toggleSlider.addEventListener('click', (e) => {
+      e.preventDefault();
+      updateToggleState(!toggleInput.checked);
+    });
+    
+    toggleSlider.appendChild(toggleKnob);
+    toggleSwitch.appendChild(toggleInput);
+    toggleSwitch.appendChild(toggleSlider);
+    
+    toggleContainer.appendChild(toggleLabel);
+    toggleContainer.appendChild(toggleSwitch);
+    
+    return toggleContainer;
+  };
+  
+  const showTransformError = () => {
+    const controlPanel = document.getElementById('model-control-panel');
+    if (!controlPanel) return;
+    
+    // Create error message
+    const errorMessage = document.createElement('div');
+    errorMessage.textContent = 'Transform controls not available. Try reloading the model.';
+    errorMessage.style.color = '#ef4444';
+    errorMessage.style.fontSize = '12px';
+    errorMessage.style.padding = '8px 12px';
+    errorMessage.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+    errorMessage.style.borderRadius = '6px';
+    errorMessage.style.marginTop = '8px';
+    errorMessage.style.textAlign = 'center';
+    
+    // Add to panel
+    const panelContent = controlPanel.querySelector('#panel-content');
+    if (panelContent) {
+      // Check if error message already exists
+      const existingError = panelContent.querySelector('.transform-error');
+      if (existingError) {
+        existingError.remove();
+      }
+      
+      errorMessage.classList.add('transform-error');
+      panelContent.appendChild(errorMessage);
+      
+      // Remove after 3 seconds
+      setTimeout(() => {
+        if (errorMessage.parentNode === panelContent) {
+          panelContent.removeChild(errorMessage);
+        }
+      }, 3000);
+    }
+  };
+  
+  // Return the component JSX
   return React.createElement('div', {
     ref: containerRef,
-    className: 'w-full h-full min-h-[400px] relative bg-gray-900'
-  });
+    className: 'model-viewer-container',
+    style: {
+      position: 'relative',
+      width: '100%',
+      height: '100%',
+      minHeight: '400px',
+      backgroundColor: '#2a2a2a', // Match scene background color
+      overflow: 'hidden',
+      borderRadius: '8px'
+    }
+  }, error && React.createElement('div', {
+    className: 'error-message',
+    style: {
+      position: 'absolute',
+      top: '50%',
+      left: '50%',
+      transform: 'translate(-50%, -50%)',
+      color: '#ff5555',
+      backgroundColor: 'rgba(0, 0, 0, 0.7)',
+      padding: '10px 20px',
+      borderRadius: '4px',
+      zIndex: 100
+    }
+  }, error));
 }; 

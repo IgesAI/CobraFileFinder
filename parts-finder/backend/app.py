@@ -14,18 +14,31 @@ from flask_limiter.util import get_remote_address
 import getpass
 import ctypes
 import sys
+from config import get_config
+
+# Initialize configuration
+config_class = get_config()
+config_instance = config_class()
+config_instance.validate_directories()
 
 app = Flask(__name__, static_folder='../frontend')
 CORS(app)
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(
+    level=logging.DEBUG if app.config.get('DEBUG', False) else logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(os.path.join(os.path.dirname(__file__), 'logs', 'app.log'))
+    ]
+)
 
-# Configure base directories for different categories
-DIRECTORIES = {
-    'motorcycle': r'N:\Drawings',    # Motorcycle parts
-    'aerospace': r'X:'              # Aerospace parts
-}
+# Configure base directories for different categories from config
+DIRECTORIES = config_instance.DIRECTORIES
+
+# Create logs directory if it doesn't exist
+os.makedirs(os.path.join(os.path.dirname(__file__), 'logs'), exist_ok=True)
 
 local_data = threading.local()
 

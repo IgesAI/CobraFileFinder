@@ -217,9 +217,122 @@ window.PartsSearch = function PartsSearch() {
     console.log('PreviewModal: File info:', file);
     console.log('PreviewModal: File extension:', fileExtension);
     console.log('PreviewModal: Is model file?', isModelFile);
+    console.log('PreviewModal: ModelViewer available?', !!window.ModelViewer);
+    console.log('PreviewModal: MultiViewerContainer available?', !!window.MultiViewerContainer);
+    
+    // Use a ref to track if this is the first render
+    const isFirstRender = React.useRef(true);
+    
+    // Use a stable key for the model viewer
+    const modelViewerKey = React.useMemo(() => `model-viewer-${file.path}-${Date.now()}`, [file.path]);
+    
+    // Use effect to reset the first render flag when file changes
+    React.useEffect(() => {
+      isFirstRender.current = true;
+    }, [file]);
+    
+    // Use effect to handle model viewer initialization
+    React.useEffect(() => {
+      if (isModelFile && isFirstRender.current) {
+        isFirstRender.current = false;
+        console.log('PreviewModal: Initializing model viewer for', file.path);
+      }
+      
+      // Cleanup function to handle model viewer cleanup
+      return () => {
+        if (isModelFile && window.threeJsCleanup) {
+          console.log('PreviewModal: Cleaning up model viewer');
+          window.threeJsCleanup();
+        }
+      };
+    }, [isModelFile, file.path]);
+    
+    // Function to open in multi-viewer
+    const openInMultiViewer = () => {
+      console.log('Opening file in MultiViewer:', file.path);
+      
+      // Check if MultiViewerContainer is already open
+      if (window.multiViewerInstance) {
+        // If it's already open, add a new viewer with this file
+        console.log('MultiViewerContainer is already open, adding new viewer');
+        window.multiViewerInstance.addViewer(file.path);
+      } else {
+        // If not open, dispatch an event to open it
+        console.log('Dispatching event to open MultiViewerContainer');
+        const event = new CustomEvent('addAnotherView', {
+          detail: { filePath: file.path },
+          bubbles: true
+        });
+        document.dispatchEvent(event);
+        
+        // Close the preview modal
+        onClose();
+      }
+    };
+    
+    // Render different content based on file type
+    const renderPreviewContent = () => {
+      if (isModelFile) {
+        // For 3D model files
+        if (window.ModelViewer) {
+          return React.createElement('div', {
+            className: 'preview-model-container',
+            style: {
+              width: '100%',
+              height: '400px',
+              backgroundColor: '#121212',
+              borderRadius: '8px',
+              overflow: 'hidden'
+            }
+          }, React.createElement(window.ModelViewer, {
+            key: modelViewerKey,
+            filePath: file.path
+          }));
+        } else {
+          return React.createElement('div', {
+            className: 'preview-error',
+            style: {
+              padding: '20px',
+              textAlign: 'center',
+              color: '#ff5555'
+            }
+          }, 'ModelViewer component not available. Please reload the page.');
+        }
+      } else if (fileExtension === 'pdf') {
+        // For PDF files
+        return React.createElement(PDFViewer, {
+          className: 'preview-pdf',
+          url: `/api/file/${encodeURIComponent(file.path)}`
+        });
+      } else if (['jpg', 'jpeg', 'png', 'gif', 'webp'].includes(fileExtension)) {
+        // For image files
+        return React.createElement('img', {
+          src: `/api/file/${encodeURIComponent(file.path)}`,
+          alt: file.name,
+          className: 'preview-image',
+          style: {
+            maxWidth: '100%',
+            maxHeight: '400px',
+            objectFit: 'contain'
+          }
+        });
+      } else {
+        // For text files or other types
+        return React.createElement('div', {
+          className: 'preview-text'
+        }, 'Preview not available for this file type');
+      }
+    };
     
     const handleClose = () => {
       console.log('Closing preview modal');
+      
+      // Clean up the model viewer if it's a model file
+      if (isModelFile && window.threeJsCleanup) {
+        console.log('PreviewModal: Cleaning up model viewer on close');
+        window.threeJsCleanup();
+      }
+      
       onClose();
     };
     
@@ -243,41 +356,23 @@ window.PartsSearch = function PartsSearch() {
               className: 'px-2 py-1 text-xs font-medium rounded-full bg-gradient-to-r from-purple-500 to-pink-500 text-white shadow-sm'
             }, fileExtension.toUpperCase())
           ]),
-          React.createElement('button', {
-            onClick: handleClose,
-            className: 'text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white text-2xl font-bold'
-          }, '×')
+          React.createElement('div', {
+            className: 'flex items-center gap-2'
+          }, [
+            isModelFile && React.createElement('button', {
+              onClick: openInMultiViewer,
+              className: 'px-3 py-1 text-xs font-medium rounded-md bg-blue-600 text-white hover:bg-blue-700 transition-colors'
+            }, 'Open in Multi-Viewer'),
+            React.createElement('button', {
+              onClick: handleClose,
+              className: 'text-gray-500 hover:text-gray-700 dark:text-gray-300 dark:hover:text-white text-2xl font-bold'
+            }, '×')
+          ])
         ]),
         React.createElement('div', {
           key: 'content',
-          className: 'h-[calc(100%-3rem)]'
-        },
-          isModelFile
-            ? React.createElement(window.ModelViewer, {
-                key: `model-viewer-${file.path}-${Date.now()}`,
-                filePath: file.path
-              })
-            : React.createElement('div', {
-                className: 'flex flex-col items-center justify-center h-full'
-              }, [
-                React.createElement('div', {
-                  key: 'icon',
-                  className: 'text-6xl mb-4'
-                }, '📄'),
-                React.createElement('p', {
-                  key: 'message',
-                  className: 'text-gray-500 dark:text-gray-400 text-center'
-                }, `Preview not available for ${fileExtension.toUpperCase()} files`),
-                React.createElement('div', {
-                  key: 'file-info',
-                  className: 'mt-4 p-4 bg-gray-100 dark:bg-gray-700 rounded-lg text-sm'
-                }, [
-                  React.createElement('p', { key: 'path' }, `Path: ${file.path}`),
-                  React.createElement('p', { key: 'size' }, `Size: ${Math.round(file.size / 1024)} KB`),
-                  React.createElement('p', { key: 'modified' }, `Modified: ${new Date(file.modified * 1000).toLocaleString()}`)
-                ])
-              ])
-        )
+          className: 'h-[calc(100%-3rem)] multi-viewer-container'
+        }, renderPreviewContent())
       ])
     );
   };
@@ -597,7 +692,11 @@ window.PartsSearch = function PartsSearch() {
               React.createElement(window.SelectItem, { 
                 key: 'aerospace',
                 value: 'aerospace' 
-              }, 'Aerospace Parts')
+              }, 'Aerospace Parts'),
+              React.createElement(window.SelectItem, { 
+                key: 'documents',
+                value: 'documents' 
+              }, 'Documents')
             ])
           ])
         ),

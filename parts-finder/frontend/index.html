@@ -6,7 +6,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
     <meta http-equiv="Pragma" content="no-cache" />
     <meta http-equiv="Expires" content="0" />
-    <title>Parts Finder</title>
+    <title>Parts Finder v2</title>
     <!-- Initialize dark mode before anything else -->
     <script>
       if (localStorage.theme === 'dark' || (!('theme' in localStorage) && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
@@ -52,10 +52,10 @@
     <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <!-- Add Three.js and STL loader -->
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/build/three.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
     <script src="src/lib/three/TransformControls.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/three@0.132.2/examples/js/loaders/STLLoader.js"></script>
     <!-- Add Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest/dist/umd/lucide.js"></script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -74,15 +74,371 @@
         cursor: pointer;
         z-index: 9999;
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        display: flex;
+        align-items: center;
+        gap: 8px;
       }
       #reload-button:hover {
         background-color: #4338ca;
+        transform: translateY(-2px);
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+      }
+      
+      /* Floating Add View button */
+      #floating-add-view-button {
+        position: absolute;
+        bottom: 20px;
+        right: 20px;
+        background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+        color: white;
+        padding: 10px 16px;
+        border-radius: 8px;
+        border: none;
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+        z-index: 1000;
+      }
+      
+      #floating-add-view-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(139, 92, 246, 0.5);
+      }
+      
+      /* Global Add View button */
+      .add-view-button {
+        position: fixed;
+        bottom: 80px;
+        right: 20px;
+        background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+        color: white;
+        padding: 12px 16px;
+        border-radius: 8px;
+        border: none;
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.3s ease;
+        z-index: 9000;
+      }
+      
+      .add-view-button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 6px 16px rgba(139, 92, 246, 0.5);
+      }
+      
+      /* Multi-viewer container styles */
+      .multi-viewer-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr 1fr;
+        gap: 10px;
+        width: 100%;
+        height: 100%;
+        padding: 10px;
+        box-sizing: border-box;
+      }
+      
+      /* Adjust grid based on number of viewers */
+      .viewers-1 {
+        grid-template-columns: 1fr;
+        grid-template-rows: 1fr;
+      }
+      
+      .viewers-2 {
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr;
+      }
+      
+      .viewers-3, .viewers-4 {
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: 1fr 1fr;
+      }
+      
+      /* Style for each viewer cell */
+      .viewer-cell {
+        position: relative;
+        background-color: #0f172a;
+        border-radius: 8px;
+        overflow: hidden;
+        min-height: 400px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        border: 2px solid transparent;
+        transition: border-color 0.3s ease;
+      }
+      
+      .viewer-active {
+        border-color: #8b5cf6;
+        box-shadow: 0 0 0 2px rgba(139, 92, 246, 0.3);
+      }
+      
+      /* Close button for each viewer */
+      .close-button {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        width: 24px;
+        height: 24px;
+        background-color: rgba(239, 68, 68, 0.8);
+        color: white;
+        border: none;
+        border-radius: 50%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 16px;
+        cursor: pointer;
+        z-index: 100;
+        transition: all 0.2s ease;
+      }
+      
+      .close-button:hover {
+        background-color: rgb(239, 68, 68);
+        transform: scale(1.1);
+      }
+      
+      /* Style for the compact search overlay */
+      .compact-search-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.3s ease;
+      }
+      
+      .compact-search-overlay.visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+      
+      .compact-search-container {
+        background-color: #1e293b;
+        border-radius: 12px;
+        width: 90%;
+        max-width: 600px;
+        max-height: 80vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      .compact-search-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      .compact-search-header h3 {
+        margin: 0;
+        color: white;
+        font-size: 18px;
+      }
+      
+      .close-search-button {
+        background: none;
+        border: none;
+        color: #94a3b8;
+        font-size: 24px;
+        cursor: pointer;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        transition: all 0.2s ease;
+      }
+      
+      .close-search-button:hover {
+        background-color: rgba(255, 255, 255, 0.1);
+        color: white;
+      }
+      
+      .compact-search-form {
+        padding: 20px;
+        border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      
+      .search-input-group {
+        display: flex;
+        gap: 8px;
+      }
+      
+      .search-input-group input {
+        flex: 1;
+        padding: 10px 12px;
+        background-color: #0f172a;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        color: white;
+        font-size: 14px;
+      }
+      
+      .search-input-group select {
+        padding: 10px 12px;
+        background-color: #0f172a;
+        border: 1px solid rgba(255, 255, 255, 0.1);
+        border-radius: 6px;
+        color: white;
+        font-size: 14px;
+        min-width: 100px;
+      }
+      
+      .search-button {
+        padding: 10px 16px;
+        background: linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      
+      .search-button:hover {
+        box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3);
+        transform: translateY(-1px);
+      }
+      
+      .search-button:disabled {
+        opacity: 0.7;
+        cursor: not-allowed;
+      }
+      
+      .search-error {
+        color: #f87171;
+        margin-top: 12px;
+        font-size: 14px;
+      }
+      
+      .compact-search-results {
+        padding: 10px;
+        overflow-y: auto;
+        max-height: 50vh;
+      }
+      
+      .search-result-item {
+        padding: 12px;
+        border-radius: 6px;
+        background-color: #0f172a;
+        margin-bottom: 8px;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      
+      .search-result-item:hover {
+        background-color: #1e293b;
+        transform: translateY(-1px);
+      }
+      
+      .result-name {
+        font-weight: 500;
+        color: white;
+        margin-bottom: 4px;
+      }
+      
+      .result-type {
+        font-size: 12px;
+        color: #94a3b8;
+      }
+      
+      /* Make sure the 3D viewer takes up the full space */
+      .model-viewer-container {
+        width: 100%;
+        height: 100%;
+        min-height: 400px;
+        position: relative;
+      }
+      
+      /* Ensure the control panel is visible and not cut off */
+      #model-control-panel {
+        max-height: calc(100% - 20px);
+        overflow-y: auto;
+        z-index: 1000 !important;
+      }
+      
+      /* Style for the constraint axis buttons */
+      .axis-button {
+        width: 30px;
+        height: 30px;
+        border-radius: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.2);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-weight: bold;
+        cursor: pointer;
+        transition: all 0.2s ease;
+      }
+      
+      .axis-button.x {
+        background-color: rgba(239, 68, 68, 0.2);
+        color: #ef4444;
+      }
+      
+      .axis-button.y {
+        background-color: rgba(34, 197, 94, 0.2);
+        color: #22c55e;
+      }
+      
+      .axis-button.z {
+        background-color: rgba(59, 130, 246, 0.2);
+        color: #3b82f6;
+      }
+      
+      .axis-button.active {
+        background-color: rgba(255, 255, 255, 0.9);
+      }
+      
+      .axis-button.x.active {
+        color: #ef4444;
+        background-color: rgba(239, 68, 68, 0.4);
+      }
+      
+      .axis-button.y.active {
+        color: #22c55e;
+        background-color: rgba(34, 197, 94, 0.4);
+      }
+      
+      .axis-button.z.active {
+        color: #3b82f6;
+        background-color: rgba(59, 130, 246, 0.4);
       }
     </style>
   </head>
   <body>
     <div id="root"></div>
-    <button id="reload-button" onclick="location.reload(true)">Force Reload</button>
+    <button id="reload-button" onclick="location.reload(true)">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M23 4v6h-6"></path>
+        <path d="M1 20v-6h6"></path>
+        <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10"></path>
+        <path d="M20.49 15a9 9 0 0 1-14.85 3.36L1 14"></path>
+      </svg>
+      Force Reload (F5)
+    </button>
 
     <!-- Define Components First -->
     <script>
@@ -209,13 +565,149 @@
 
     <!-- Load App Components in Order -->
     <script src="src/components/ErrorBoundary.jsx?v=1"></script>
-    <script src="src/components/ModelViewer.jsx?v=17"></script>
-    <script src="src/components/PartsSearch.jsx?v=4"></script>
-    <script src="src/App.jsx?v=1"></script>
+    <script src="src/components/ModelViewer.jsx?v=28"></script>
+    <script src="src/components/MultiViewerContainer.jsx?v=12"></script>
+    <script src="src/components/PartsSearch.jsx?v=5"></script>
+    <script src="src/App.jsx?v=2"></script>
 
     <!-- Initialize app -->
     <script>
       document.addEventListener('DOMContentLoaded', function() {
+        // Check component availability
+        console.log('Component availability check:');
+        console.log('- ModelViewer:', !!window.ModelViewer);
+        console.log('- MultiViewerContainer:', !!window.MultiViewerContainer);
+        console.log('- PartsSearch:', !!window.PartsSearch);
+        console.log('- App:', !!window.App);
+        console.log('- ErrorBoundary:', !!window.ErrorBoundary);
+        
+        // Create a direct "Add View" button that's always visible
+        const createDirectAddViewButton = () => {
+          // Check if button already exists
+          if (document.getElementById('direct-add-view-button')) {
+            return;
+          }
+          
+          const button = document.createElement('button');
+          button.id = 'direct-add-view-button';
+          button.innerHTML = `
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19"></line>
+              <line x1="5" y1="12" x2="19" y2="12"></line>
+            </svg>
+            <span>Add View</span>
+          `;
+          
+          // Style the button
+          button.style.position = 'fixed';
+          button.style.bottom = '140px';
+          button.style.right = '20px';
+          button.style.background = 'linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%)';
+          button.style.color = 'white';
+          button.style.padding = '12px 16px';
+          button.style.borderRadius = '8px';
+          button.style.border = 'none';
+          button.style.boxShadow = '0 4px 12px rgba(139, 92, 246, 0.3)';
+          button.style.cursor = 'pointer';
+          button.style.display = 'flex';
+          button.style.alignItems = 'center';
+          button.style.gap = '8px';
+          button.style.fontSize = '14px';
+          button.style.fontWeight = '500';
+          button.style.transition = 'all 0.3s ease';
+          button.style.zIndex = '9999';
+          
+          // Add hover effect
+          button.addEventListener('mouseenter', () => {
+            button.style.transform = 'translateY(-2px)';
+            button.style.boxShadow = '0 6px 16px rgba(139, 92, 246, 0.5)';
+          });
+          
+          button.addEventListener('mouseleave', () => {
+            button.style.transform = 'translateY(0)';
+            button.style.boxShadow = '0 4px 12px rgba(139, 92, 246, 0.3)';
+          });
+          
+          // Add click handler
+          button.addEventListener('click', () => {
+            console.log('Direct Add View button clicked');
+            
+            // Try to use the global instance
+            if (window.multiViewerInstance) {
+              console.log('Using global multiViewerInstance');
+              if (typeof window.multiViewerInstance.setShowCompactSearch === 'function') {
+                window.multiViewerInstance.setShowCompactSearch(true);
+                return;
+              }
+              
+              if (typeof window.multiViewerInstance.handleAddAnotherView === 'function') {
+                window.multiViewerInstance.handleAddAnotherView({
+                  detail: { filePath: null }
+                });
+                return;
+              }
+            }
+            
+            // Fallback: Dispatch event
+            const event = new CustomEvent('addAnotherView', {
+              bubbles: true,
+              detail: { filePath: null }
+            });
+            
+            document.dispatchEvent(event);
+            window.dispatchEvent(event);
+          });
+          
+          // Add the button to the document body
+          document.body.appendChild(button);
+          console.log('Direct Add View button added to document body');
+        };
+        
+        // Create the direct Add View button
+        createDirectAddViewButton();
+        
+        // Set up global event listener for addAnotherView events
+        window.addEventListener('addAnotherView', function(e) {
+          console.log('Global addAnotherView event received:', e);
+          console.log('Event detail:', e.detail);
+          
+          // Try to find the MultiViewerContainer instance
+          if (window.multiViewerInstance) {
+            console.log('Found global multiViewerInstance:', window.multiViewerInstance);
+            
+            if (typeof window.multiViewerInstance.handleAddAnotherView === 'function') {
+              console.log('Calling handleAddAnotherView on global multiViewerInstance');
+              window.multiViewerInstance.handleAddAnotherView(e);
+            } else {
+              console.log('handleAddAnotherView not available on multiViewerInstance');
+              // Fallback to showing search overlay
+              if (typeof window.multiViewerInstance.setShowCompactSearch === 'function') {
+                console.log('Calling setShowCompactSearch as fallback');
+                window.multiViewerInstance.setShowCompactSearch(true);
+              }
+            }
+          } else {
+            console.log('No global multiViewerInstance found, checking DOM for MultiViewerContainer');
+            
+            // Try to find MultiViewerContainer in the DOM
+            const multiViewerContainer = document.querySelector('.multi-viewer-container');
+            if (multiViewerContainer) {
+              console.log('Found MultiViewerContainer in DOM, dispatching event directly');
+              const newEvent = new CustomEvent('addAnotherView', {
+                bubbles: true,
+                detail: e.detail
+              });
+              multiViewerContainer.dispatchEvent(newEvent);
+            } else {
+              console.log('No MultiViewerContainer found in DOM');
+            }
+          }
+        });
+        
+        document.addEventListener('addAnotherView', function(e) {
+          console.log('Document-level addAnotherView event received:', e);
+        });
+        
         if (window.PartsSearch && window.App && window.ErrorBoundary) {
           lucide.createIcons();
           const root = ReactDOM.createRoot(document.getElementById('root'));
@@ -231,7 +723,8 @@
             PartsSearch: !!window.PartsSearch,
             App: !!window.App,
             ErrorBoundary: !!window.ErrorBoundary,
-            ModelViewer: !!window.ModelViewer
+            ModelViewer: !!window.ModelViewer,
+            MultiViewerContainer: !!window.MultiViewerContainer
           });
         }
       });
